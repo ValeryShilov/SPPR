@@ -1,0 +1,12 @@
+import apiClient from './client'
+
+export const athletesApi = {
+  get: (id: string) => apiClient.get(`/athletes/${id}`).then((r) => r.data),
+  update: (id: string, data: unknown) => apiClient.put(`/athletes/${id}`, data).then((r) => r.data),
+  getZones: (id: string) => apiClient.get(`/athletes/${id}/zones`).then((r) => r.data),
+  getMarkers: (id: string) => apiClient.get(`/athletes/${id}/markers`).then((r) => r.data),
+  addMarker: (id: string, data: unknown) =>
+    apiClient.post(`/athletes/${id}/markers`, data).then((r) => r.data),
+  updateMarker: (markerId: string, data: unknown) =>
+    apiClient.put(`/markers/${markerId}`, data).then((r) => r.data),
+}
