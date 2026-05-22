@@ -231,35 +231,6 @@ class _AthleteParams(NamedTuple):
     duration: int            # итоговая длительность (мин) с учётом ограничений зоны
 
 
-def _build_workout_drafts(
-    athlete_id: uuid.UUID,
-    template: PlanTemplate,
-    target_zone: str,
-    params: "_AthleteParams",
-    db: AsyncSession,
-) -> list[uuid.UUID]:
-    """Создаёт черновые IndividualWorkout на каждый день микроцикла; возвращает их UUID."""
-    planned_tss = _prognosis_tss(params.duration, target_zone, params.max_hr, params.thr_hr)
-    ids: list[uuid.UUID] = []
-    for day in range(template.duration_days):
-        w_id = uuid.uuid4()
-        db.add(IndividualWorkout(
-            id=w_id,
-            template_id=template.id,
-            athlete_id=athlete_id,
-            marker_id_used=params.marker_id,
-            planned_date=template.start_date + timedelta(days=day),
-            planned_duration_min=params.duration,
-            planned_tss=planned_tss,
-            k_qual=_dec(params.kq, 3),
-            k_form=_dec(params.kf, 3),
-            target_zone=target_zone,
-            status="draft",
-        ))
-        ids.append(w_id)
-    return ids
-
-
 async def _resolve_athlete_params(
     athlete_id: uuid.UUID, target_zone: str, db: AsyncSession
 ) -> _AthleteParams | None:
@@ -723,16 +694,90 @@ async def adapt_template(template_id: uuid.UUID, db: AsyncSession) -> list[uuid.
     if not memberships:
         return []
 
-    target_zone = _zone_for_pct(float(template.target_intensity_pct or 75))
+    _CYCLIC = frozenset({"ski", "skiroll", "run", "bike"})
+
+    default_zone = _zone_for_pct(float(template.target_intensity_pct or 75))
+    schedule: list[dict] = template.week_schedule or [
+        {"workout_type": "run", "zone": default_zone, "duration_min": 60}
+    ] * 7
+
     created_ids: list[uuid.UUID] = []
 
     for membership in memberships:
-        params = await _resolve_athlete_params(membership.athlete_id, target_zone, db)
-        if params is None:
-            continue
-        created_ids.extend(
-            _build_workout_drafts(membership.athlete_id, template, target_zone, params, db)
-        )
+        for day_offset in range(template.duration_days):
+            day_cfg = schedule[day_offset % 7]
+            w_type = day_cfg.get("workout_type") or "run"
+
+            if w_type == "rest":
+                continue
+
+            is_cyclic = w_type in _CYCLIC
+            interval_structure = day_cfg.get("interval_structure") or []
+            w_id = uuid.uuid4()
+
+            if is_cyclic:
+                if interval_structure:
+                    work_segs = [s for s in interval_structure if s.get("seg_type") == "work"]
+                    zone = work_segs[0]["zone"] if work_segs else day_cfg.get("zone", default_zone)
+                    duration = sum(
+                        s.get("duration_min", 0) * s.get("repeats", 1)
+                        for s in interval_structure
+                    )
+                else:
+                    zone = day_cfg.get("zone", default_zone)
+                    base_dur = int(day_cfg.get("duration_min") or 60)
+                    params_scale = await _resolve_athlete_params(membership.athlete_id, zone, db)
+                    if params_scale is None:
+                        continue
+                    duration = max(
+                        min(round(base_dur * params_scale.kq * params_scale.kf),
+                            _ZONE_MAX_MIN.get(zone, 240)),
+                        20,
+                    )
+
+                params = await _resolve_athlete_params(membership.athlete_id, zone, db)
+                if params is None:
+                    continue
+                planned_tss = _prognosis_tss(duration, zone, params.max_hr, params.thr_hr)
+
+                db.add(IndividualWorkout(
+                    id=w_id,
+                    template_id=template.id,
+                    athlete_id=membership.athlete_id,
+                    marker_id_used=params.marker_id,
+                    planned_date=template.start_date + timedelta(days=day_offset),
+                    planned_duration_min=duration,
+                    planned_tss=planned_tss,
+                    k_qual=_dec(params.kq, 3),
+                    k_form=_dec(params.kf, 3),
+                    target_zone=zone,
+                    workout_type=w_type,
+                    workout_subtype=day_cfg.get("workout_subtype"),
+                    description=day_cfg.get("description"),
+                    interval_structure=interval_structure or None,
+                    status="draft",
+                ))
+            else:
+                dur = int(day_cfg.get("duration_min") or 0) or None
+                db.add(IndividualWorkout(
+                    id=w_id,
+                    template_id=template.id,
+                    athlete_id=membership.athlete_id,
+                    marker_id_used=None,
+                    planned_date=template.start_date + timedelta(days=day_offset),
+                    planned_duration_min=dur,
+                    planned_tss=None,
+                    k_qual=None,
+                    k_form=None,
+                    target_zone=None,
+                    workout_type=w_type,
+                    workout_subtype=day_cfg.get("workout_subtype"),
+                    description=day_cfg.get("description"),
+                    interval_structure=None,
+                    status="draft",
+                ))
+
+            created_ids.append(w_id)
 
     await db.commit()
     return created_ids

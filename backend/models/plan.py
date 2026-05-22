@@ -2,8 +2,8 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import DATE, TIMESTAMP, Enum as SAEnum, ForeignKey, Integer, Numeric, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import DATE, JSON, TIMESTAMP, Enum as SAEnum, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.core.database import Base
@@ -21,6 +21,7 @@ class PlanTemplate(Base):
     duration_days: Mapped[int] = mapped_column(Integer, nullable=False)
     target_intensity_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
     description: Mapped[str | None] = mapped_column(Text)
+    week_schedule: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
 
     group: Mapped["TrainingGroup"] = relationship(back_populates="plan_templates")
@@ -46,6 +47,10 @@ class IndividualWorkout(Base):
     k_qual: Mapped[Decimal | None] = mapped_column(Numeric(4, 3))
     k_form: Mapped[Decimal | None] = mapped_column(Numeric(4, 3))
     target_zone: Mapped[str | None] = mapped_column(String(2))
+    workout_type: Mapped[str | None] = mapped_column(String(50))
+    workout_subtype: Mapped[str | None] = mapped_column(String(50))
+    description: Mapped[str | None] = mapped_column(Text)
+    interval_structure: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     status: Mapped[str] = mapped_column(
         SAEnum("draft", "published", "completed", name="workout_status"),
         nullable=False,

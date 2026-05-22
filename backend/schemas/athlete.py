@@ -80,3 +80,14 @@ class HRZonesResponse(BaseModel):
     max_hr: int
     source: str
     zones: list[HRZone]
+
+
+class WorkoutHistoryItem(BaseModel):
+    id: uuid.UUID
+    planned_date: date
+    planned_duration_min: int | None
+    planned_tss: float | None
+    actual_duration_min: int | None
+    actual_tss: float | None
+    target_zone: str | None
+    status: str

@@ -2,7 +2,10 @@ FROM --platform=linux/amd64 python:3.11-alpine
 
 WORKDIR /app
 
-RUN apk add --no-cache gcc musl-dev libffi-dev openssl-dev
+RUN apk add --no-cache \
+    gcc musl-dev libffi-dev openssl-dev \
+    libxml2-dev libxslt-dev \
+    libstdc++ g++
 
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt

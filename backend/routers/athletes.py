@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,14 +8,19 @@ from backend.core.auth import get_current_user
 from backend.core.database import get_db
 from backend.models.athlete import AthleteProfile, PhysiologicalMarker
 from backend.models.group import GroupMembership, TrainingGroup
+from backend.models.plan import IndividualWorkout
+from backend.models.telemetry import ActualTelemetry
 from backend.models.user import User
 from backend.schemas.athlete import (
     AthleteProfileCreate,
     AthleteProfileRead,
     AthleteProfileUpdate,
+    HRZonesResponse,
     PhysiologicalMarkerCreate,
     PhysiologicalMarkerRead,
+    WorkoutHistoryItem,
 )
+from backend.services.analytics import calculate_hr_zones
 
 router = APIRouter()
 
@@ -180,3 +185,52 @@ async def create_marker(
     await db.commit()
     await db.refresh(marker)
     return marker
+
+
+@router.get("/{athlete_id}/zones", response_model=HRZonesResponse)
+async def get_zones(
+    athlete_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await _get_accessible_profile(athlete_id, db, current_user)
+    try:
+        return await calculate_hr_zones(athlete_id, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.get("/{athlete_id}/history", response_model=list[WorkoutHistoryItem])
+async def get_workout_history(
+    athlete_id: uuid.UUID,
+    limit: int = Query(default=10, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await _get_accessible_profile(athlete_id, db, current_user)
+
+    result = await db.execute(
+        select(IndividualWorkout, ActualTelemetry)
+        .outerjoin(ActualTelemetry, ActualTelemetry.workout_id == IndividualWorkout.id)
+        .where(
+            IndividualWorkout.athlete_id == athlete_id,
+            IndividualWorkout.status != "draft",
+        )
+        .order_by(IndividualWorkout.planned_date.desc())
+        .limit(limit)
+    )
+    rows = result.all()
+
+    return [
+        WorkoutHistoryItem(
+            id=w.id,
+            planned_date=w.planned_date,
+            planned_duration_min=w.planned_duration_min,
+            planned_tss=float(w.planned_tss) if w.planned_tss is not None else None,
+            actual_duration_min=t.actual_duration_min if t else None,
+            actual_tss=float(t.actual_tss) if (t and t.actual_tss is not None) else None,
+            target_zone=w.target_zone,
+            status=w.status,
+        )
+        for w, t in rows
+    ]

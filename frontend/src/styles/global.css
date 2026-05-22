@@ -1,0 +1,32 @@
+:root {
+  /* Primary */
+  --color-primary:        #C8102E;
+  --color-primary-hover:  #9B0000;
+  --color-primary-light:  #FFEBEE;
+  --color-primary-subtle: #FFCDD2;
+
+  /* Navigation */
+  --color-nav-bg:         #212121;
+  --color-nav-text:       #FFFFFF;
+  --color-nav-active:     #C8102E;
+
+  /* Layout */
+  --color-page-bg:        #F5F5F5;
+  --color-card-bg:        #FFFFFF;
+  --color-border:         #E0E0E0;
+
+  /* Text */
+  --color-text-primary:   #212121;
+  --color-text-secondary: #757575;
+
+  /* Status */
+  --color-success:        #43A047;
+  --color-warning:        #FB8C00;
+  --color-error:          #C8102E;
+  --color-info:           #1976D2;
+}
+
+body {
+  background-color: var(--color-page-bg);
+  color: var(--color-text-primary);
+}
