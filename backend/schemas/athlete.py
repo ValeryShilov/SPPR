@@ -85,9 +85,20 @@ class HRZonesResponse(BaseModel):
 class WorkoutHistoryItem(BaseModel):
     id: uuid.UUID
     planned_date: date
+    workout_type: str | None
+    workout_subtype: str | None
+    description: str | None
     planned_duration_min: int | None
     planned_tss: float | None
     actual_duration_min: int | None
     actual_tss: float | None
+    actual_distance_km: float | None
+    avg_hr: int | None
+    max_hr: int | None
+    hr_zone1_min: int | None
+    hr_zone2_min: int | None
+    hr_zone3_min: int | None
+    hr_zone4_min: int | None
+    hr_zone5_min: int | None
     target_zone: str | None
     status: str

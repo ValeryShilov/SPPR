@@ -1,4 +1,5 @@
 import uuid
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -203,34 +204,59 @@ async def get_zones(
 @router.get("/{athlete_id}/history", response_model=list[WorkoutHistoryItem])
 async def get_workout_history(
     athlete_id: uuid.UUID,
-    limit: int = Query(default=10, ge=1, le=100),
+    date_from: date = Query(default=None),
+    date_to: date = Query(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     await _get_accessible_profile(athlete_id, db, current_user)
 
-    result = await db.execute(
-        select(IndividualWorkout, ActualTelemetry)
-        .outerjoin(ActualTelemetry, ActualTelemetry.workout_id == IndividualWorkout.id)
+    today = date.today()
+    d_to   = date_to   or today
+    d_from = date_from or (d_to - timedelta(days=29))
+
+    workouts_result = await db.execute(
+        select(IndividualWorkout)
         .where(
             IndividualWorkout.athlete_id == athlete_id,
-            IndividualWorkout.status != "draft",
+            IndividualWorkout.status == "completed",
+            IndividualWorkout.planned_date >= d_from,
+            IndividualWorkout.planned_date <= d_to,
         )
         .order_by(IndividualWorkout.planned_date.desc())
-        .limit(limit)
     )
-    rows = result.all()
+    workouts = workouts_result.scalars().all()
+    if not workouts:
+        return []
 
-    return [
-        WorkoutHistoryItem(
+    workout_ids = [w.id for w in workouts]
+    telemetry_result = await db.execute(
+        select(ActualTelemetry).where(ActualTelemetry.workout_id.in_(workout_ids))
+    )
+    telemetry_map = {t.workout_id: t for t in telemetry_result.scalars().all()}
+
+    items = []
+    for w in workouts:
+        t = telemetry_map.get(w.id)
+        items.append(WorkoutHistoryItem(
             id=w.id,
             planned_date=w.planned_date,
+            workout_type=w.workout_type,
+            workout_subtype=w.workout_subtype,
+            description=w.description,
             planned_duration_min=w.planned_duration_min,
             planned_tss=float(w.planned_tss) if w.planned_tss is not None else None,
             actual_duration_min=t.actual_duration_min if t else None,
             actual_tss=float(t.actual_tss) if (t and t.actual_tss is not None) else None,
+            actual_distance_km=float(t.distance_km) if (t and t.distance_km is not None) else None,
+            avg_hr=t.avg_hr if t else None,
+            max_hr=t.max_hr if t else None,
+            hr_zone1_min=t.hr_zone1_min if t else None,
+            hr_zone2_min=t.hr_zone2_min if t else None,
+            hr_zone3_min=t.hr_zone3_min if t else None,
+            hr_zone4_min=t.hr_zone4_min if t else None,
+            hr_zone5_min=t.hr_zone5_min if t else None,
             target_zone=w.target_zone,
             status=w.status,
-        )
-        for w, t in rows
-    ]
+        ))
+    return items

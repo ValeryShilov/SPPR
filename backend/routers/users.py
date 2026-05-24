@@ -4,10 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.auth import get_current_user, require_role
+from backend.core.auth import get_current_user, hash_password, require_role, verify_password
 from backend.core.database import get_db
 from backend.models.user import User
-from backend.schemas.auth import UserRead
+from backend.schemas.auth import ChangePasswordRequest, UpdateProfileRequest, UserRead
 
 router = APIRouter()
 
@@ -21,6 +21,33 @@ async def list_users(db: AsyncSession = Depends(get_db)):
 @router.get("/me", response_model=UserRead)
 async def get_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+@router.patch("/me", response_model=UserRead)
+async def update_me(
+    data: UpdateProfileRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if data.full_name is not None:
+        current_user.full_name = data.full_name.strip() or None
+    await db.commit()
+    await db.refresh(current_user)
+    return current_user
+
+
+@router.post("/me/change-password", status_code=status.HTTP_204_NO_CONTENT)
+async def change_password(
+    data: ChangePasswordRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not verify_password(data.current_password, current_user.password_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Неверный текущий пароль")
+    if len(data.new_password) < 6:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Пароль должен быть не менее 6 символов")
+    current_user.password_hash = hash_password(data.new_password)
+    await db.commit()
 
 
 @router.get("/{user_id}", response_model=UserRead)

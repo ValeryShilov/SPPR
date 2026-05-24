@@ -127,4 +127,4 @@
 | athlete_profiles → training_load_history | athlete_id | 1:N |
 | athlete_profiles → diagnostic_alerts | athlete_id | 1:N |
 | individual_workouts → diagnostic_alerts | triggered_by_workout_id | 1:0..1 |
-| subjective_metrics → diagnostic_alerts | triggered_by_subjective_id | 1:0..1 |
+| subjective_metrics → diagnostic_alerts | triggered_by_subjective_id | 1:01 |

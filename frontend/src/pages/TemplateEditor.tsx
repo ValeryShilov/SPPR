@@ -9,6 +9,7 @@ import {
   Group,
   NumberInput,
   Paper,
+  SegmentedControl,
   Select,
   Stack,
   Table,
@@ -19,14 +20,28 @@ import {
   Tooltip,
 } from '@mantine/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import PlanCalendar, { isoDate } from '../components/PlanCalendar'
+import SportIcon from '../components/SportIcon'
 import { plansApi } from '../api/plans'
 import { ZONE_HEX } from '../utils/zoneColors'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const DAYS = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье']
+const RU_WEEKDAY = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб']
+const RU_MONTH   = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
+
+function getDayLabel(idx: number, startDate: string): string {
+  if (startDate) {
+    const d = new Date(startDate + 'T00:00:00')
+    if (!isNaN(d.getTime())) {
+      d.setDate(d.getDate() + idx)
+      return `${RU_WEEKDAY[d.getDay()]} ${d.getDate()} ${RU_MONTH[d.getMonth()]}`
+    }
+  }
+  return `День ${idx + 1}`
+}
 
 const CYCLIC_TYPES = new Set(['ski', 'skiroll', 'run', 'bike'])
 
@@ -114,7 +129,7 @@ const mkSeg = (): Segment => ({
   note: '',
 })
 
-const DEFAULT_SCHEDULE: DayConfig[] = [
+const WEEK_DEFAULTS: DayConfig[] = [
   { workout_type: 'run',      workout_subtype: null, zone: 'Z2', duration_min: 60, description: '', is_interval: false, segments: [] },
   { workout_type: 'strength', workout_subtype: null, zone: 'Z1', duration_min: 60, description: '', is_interval: false, segments: [] },
   { workout_type: 'run',      workout_subtype: null, zone: 'Z3', duration_min: 45, description: '', is_interval: false, segments: [] },
@@ -123,6 +138,10 @@ const DEFAULT_SCHEDULE: DayConfig[] = [
   { workout_type: 'run',      workout_subtype: null, zone: 'Z2', duration_min: 90, description: '', is_interval: false, segments: [] },
   { workout_type: 'rest',     workout_subtype: null, zone: 'Z1', duration_min: 0,  description: '', is_interval: false, segments: [] },
 ]
+
+const makeDefaultDay = (idx: number): DayConfig => ({ ...WEEK_DEFAULTS[idx % 7] })
+const makeDefaultSchedule = (n: number): DayConfig[] =>
+  Array.from({ length: n }, (_, i) => makeDefaultDay(i))
 
 function fromBackend(saved: Record<string, unknown>[]): DayConfig[] {
   return saved.map((d) => {
@@ -271,10 +290,11 @@ function IntervalBuilder({ segments, onUpdate }: { segments: Segment[]; onUpdate
 
 // ─── DayCard ─────────────────────────────────────────────────────────────────
 
-function DayCard({ idx, day, onChange }: {
+function DayCard({ idx, day, onChange, label }: {
   idx: number
   day: DayConfig
   onChange: (idx: number, patch: Partial<DayConfig>) => void
+  label: string
 }) {
   const isCyclic  = CYCLIC_TYPES.has(day.workout_type)
   const isRest    = day.workout_type === 'rest'
@@ -296,8 +316,8 @@ function DayCard({ idx, day, onChange }: {
       <Stack gap="xs">
         {/* Row 1: controls */}
         <Group gap="xs" wrap="wrap" align="flex-end">
-          <Badge color={TYPE_COLOR[day.workout_type] ?? 'gray'} variant="light" miw={110}>
-            {DAYS[idx]}
+          <Badge color={TYPE_COLOR[day.workout_type] ?? 'gray'} variant="light" miw={130}>
+            {label}
           </Badge>
 
           <Select data={WORKOUT_TYPE_OPTIONS} value={day.workout_type}
@@ -374,7 +394,12 @@ export default function TemplateEditor() {
   const [startDate, setStartDate]   = useState('')
   const [durationDays, setDurationDays] = useState<number | string>(7)
   const [descr, setDescr]           = useState('')
-  const [schedule, setSchedule]     = useState<DayConfig[]>(DEFAULT_SCHEDULE)
+  const [schedule, setSchedule]     = useState<DayConfig[]>([])
+
+  const [showCalendar, setShowCalendar] = useState(true)
+  const [calView, setCalView]           = useState<'month' | 'week'>('month')
+  const [calDisplay, setCalDisplay]     = useState<Date>(new Date())
+  const [selDayStr, setSelDayStr]       = useState<string | null>(null)
 
   useEffect(() => {
     if (template) {
@@ -382,9 +407,91 @@ export default function TemplateEditor() {
       setStartDate(template.start_date)
       setDurationDays(template.duration_days)
       setDescr(template.description ?? '')
-      setSchedule(template.week_schedule ? fromBackend(template.week_schedule) : DEFAULT_SCHEDULE)
+      const n = template.duration_days
+      setSchedule(template.week_schedule ? fromBackend(template.week_schedule) : makeDefaultSchedule(n))
+      if (template.start_date) {
+        const d = new Date(template.start_date + 'T00:00:00')
+        if (!isNaN(d.getTime())) setCalDisplay(d)
+      }
     }
   }, [template])
+
+  // Sync calendar to start date when user edits it
+  useEffect(() => {
+    if (startDate) {
+      const d = new Date(startDate + 'T00:00:00')
+      if (!isNaN(d.getTime())) setCalDisplay(d)
+    }
+  }, [startDate])
+
+  // ── Calendar helpers ────────────────────────────────────────────────────────
+
+  const getScheduleIdx = (date: Date): number => {
+    if (!startDate) return -1
+    const start = new Date(startDate + 'T00:00:00')
+    if (isNaN(start.getTime())) return -1
+    return Math.round((date.getTime() - start.getTime()) / 86400000)
+  }
+
+  const planEndDate = (startDate && schedule.length > 0)
+    ? (() => {
+        const d = new Date(startDate + 'T00:00:00')
+        d.setDate(d.getDate() + schedule.length - 1)
+        return isoDate(d)
+      })()
+    : undefined
+
+  const renderTemplateDay = (date: Date) => {
+    const idx = getScheduleIdx(date)
+    if (idx < 0 || idx >= schedule.length) return null
+    const day = schedule[idx]
+    if (day.workout_type === 'rest') {
+      return (
+        <Box mt={2}>
+          <SportIcon type="rest" size={26} color="#868e96" />
+          <Text size="xs" c="dimmed" style={{ lineHeight: 1.2 }}>Отдых</Text>
+        </Box>
+      )
+    }
+    return (
+      <Box mt={2}>
+        <SportIcon type={day.workout_type} size={26} color="#343a40" />
+        <Text size="xs" c="dimmed" style={{ lineHeight: 1.2 }}>
+          {day.zone} · {day.duration_min}м
+        </Text>
+        {day.is_interval && day.segments.length > 0 && (
+          <Text size="xs" c="blue" style={{ fontSize: 10 }}>интервал</Text>
+        )}
+      </Box>
+    )
+  }
+
+  const navigateCal = (dir: -1 | 1) => {
+    const d = new Date(calDisplay)
+    if (calView === 'week') d.setDate(d.getDate() + dir * 7)
+    else d.setMonth(d.getMonth() + dir)
+    setCalDisplay(d)
+  }
+
+  const handleCalClick = (date: Date) => {
+    const idx = getScheduleIdx(date)
+    if (idx >= 0 && idx < schedule.length) {
+      const iso = isoDate(date)
+      setSelDayStr((prev) => (prev === iso ? null : iso))
+    }
+  }
+
+  const selIdx = selDayStr ? getScheduleIdx(new Date(selDayStr + 'T00:00:00')) : -1
+
+  const applyDuration = () => {
+    const n = Math.max(1, Math.min(365, Number(durationDays) || 1))
+    setDurationDays(n)
+    setSchedule((prev) => {
+      if (n === prev.length) return prev
+      if (n < prev.length) return prev.slice(0, n)
+      return [...prev, ...Array.from({ length: n - prev.length }, (_, i) => makeDefaultDay(prev.length + i))]
+    })
+  }
 
   const updateDay = (idx: number, patch: Partial<DayConfig>) =>
     setSchedule((prev) => prev.map((d, i) => (i === idx ? { ...d, ...patch } : d)))
@@ -442,7 +549,7 @@ export default function TemplateEditor() {
   if (!template)  return <Text p="xl" c="red">Шаблон не найден</Text>
 
   return (
-    <Container size="lg" py="xl">
+    <Container size="xl" py="sm">
       <Group justify="space-between" mb="lg">
         <Title order={2}>Редактор шаблона</Title>
         <Button variant="light" onClick={() => navigate('/planning')}>← Назад</Button>
@@ -451,13 +558,24 @@ export default function TemplateEditor() {
       <Stack gap="lg">
         {/* Meta */}
         <Paper withBorder p="md" radius="md">
-          <Group grow>
+          <Group grow align="flex-end">
             <TextInput label="Название" value={name}
               onChange={(e) => setName(e.target.value)} required />
             <TextInput label="Дата начала" type="date" value={startDate}
               onChange={(e) => setStartDate(e.target.value)} required />
-            <NumberInput label="Длительность, дней" min={1} max={90}
-              value={durationDays} onChange={setDurationDays} />
+            <Group align="flex-end" gap="xs" style={{ flex: 1 }}>
+              <NumberInput
+                label="Длительность, дней"
+                description={`Сейчас: ${schedule.length} дн.`}
+                min={1} max={365}
+                value={durationDays}
+                onChange={setDurationDays}
+                style={{ flex: 1 }}
+              />
+              <Button size="sm" variant="light" mb={1} onClick={applyDuration}>
+                Применить
+              </Button>
+            </Group>
             <TextInput label="Описание" value={descr}
               onChange={(e) => setDescr(e.target.value)} />
           </Group>
@@ -465,12 +583,66 @@ export default function TemplateEditor() {
 
         {/* Schedule */}
         <Paper withBorder p="md" radius="md">
-          <Title order={4} mb="sm">Недельное расписание</Title>
-          <Stack gap="sm">
-            {schedule.map((day, idx) => (
-              <DayCard key={idx} idx={idx} day={day} onChange={updateDay} />
-            ))}
-          </Stack>
+          <Group justify="space-between" mb="sm">
+            <Group gap="sm">
+              <Title order={4}>Расписание тренировок</Title>
+              <Text size="sm" c="dimmed">{schedule.length} дн. · {Math.ceil(schedule.length / 7)} нед.</Text>
+            </Group>
+            <SegmentedControl
+              size="xs"
+              value={showCalendar ? 'cal' : 'list'}
+              onChange={(v) => { setShowCalendar(v === 'cal'); setSelDayStr(null) }}
+              data={[
+                { value: 'cal',  label: 'Календарь' },
+                { value: 'list', label: 'Список'    },
+              ]}
+            />
+          </Group>
+
+          {showCalendar ? (
+            <Stack gap="sm">
+              <PlanCalendar
+                view={calView}
+                onViewChange={setCalView}
+                displayDate={calDisplay}
+                onNavigate={navigateCal}
+                renderDay={renderTemplateDay}
+                onDayClick={handleCalClick}
+                selectedDate={selDayStr}
+                planStart={startDate || undefined}
+                planEnd={planEndDate}
+                monthCellHeight={130}
+                weekCellHeight={220}
+              />
+              {selIdx >= 0 && selIdx < schedule.length && (
+                <Paper withBorder p="sm" radius="sm">
+                  <Group justify="space-between" mb="xs">
+                    <Text fw={600}>{getDayLabel(selIdx, startDate)}</Text>
+                    <Button size="xs" variant="subtle" color="gray" onClick={() => setSelDayStr(null)}>✕</Button>
+                  </Group>
+                  <DayCard
+                    idx={selIdx}
+                    day={schedule[selIdx]}
+                    onChange={updateDay}
+                    label={getDayLabel(selIdx, startDate)}
+                  />
+                </Paper>
+              )}
+            </Stack>
+          ) : (
+            <Stack gap="sm">
+              {schedule.map((day, idx) => (
+                <Fragment key={idx}>
+                  {idx % 7 === 0 && (
+                    <Text size="xs" fw={600} c="dimmed" tt="uppercase" mt={idx > 0 ? 'xs' : 0}>
+                      Неделя {Math.floor(idx / 7) + 1}
+                    </Text>
+                  )}
+                  <DayCard idx={idx} day={day} onChange={updateDay} label={getDayLabel(idx, startDate)} />
+                </Fragment>
+              ))}
+            </Stack>
+          )}
         </Paper>
 
         {/* Summary */}
@@ -479,7 +651,7 @@ export default function TemplateEditor() {
           <Group gap="xl">
             <Stack gap={2} align="center">
               <Text size="xl" fw={700}>{totalMin}</Text>
-              <Text size="xs" c="dimmed">мин / неделя (цикл.)</Text>
+              <Text size="xs" c="dimmed">мин всего (цикл.)</Text>
             </Stack>
             <Stack gap={2} align="center">
               <Text size="xl" fw={700} c={hiPct > 20 ? 'red' : hiPct > 15 ? 'orange' : 'green'}>

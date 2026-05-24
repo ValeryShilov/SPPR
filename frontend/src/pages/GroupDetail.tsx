@@ -21,11 +21,12 @@ interface PlanTemplate {
   duration_days: number
 }
 
-const TSB_COLOR = (tsb: number | null) => {
+const TSB_COLOR = (tsb: number | string | null) => {
   if (tsb === null) return 'gray'
-  if (tsb < -30) return 'red'
-  if (tsb < -10) return 'orange'
-  if (tsb > 15) return 'blue'
+  const n = Number(tsb)
+  if (n < -30) return 'red'
+  if (n < -10) return 'orange'
+  if (n > 15) return 'blue'
   return 'green'
 }
 
@@ -148,7 +149,7 @@ export default function GroupDetail() {
                   </Table.Td>
                   <Table.Td>
                     <Badge color={TSB_COLOR(a.tsb)}>
-                      {a.tsb !== null ? a.tsb.toFixed(1) : '—'}
+                      {a.tsb !== null ? Number(a.tsb).toFixed(1) : '—'}
                     </Badge>
                   </Table.Td>
                   <Table.Td>

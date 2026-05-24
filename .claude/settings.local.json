@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker exec *)",
+      "PowerShell(docker restart sppr-frontend-1)",
+      "Bash(docker restart *)",
+      "Bash(docker cp *)"
+    ]
+  }
+}
