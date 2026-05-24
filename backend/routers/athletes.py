@@ -21,6 +21,7 @@ from backend.schemas.athlete import (
     PhysiologicalMarkerRead,
     WorkoutHistoryItem,
 )
+from backend.schemas.plan import IndividualWorkoutRead
 from backend.services.analytics import calculate_hr_zones
 
 router = APIRouter()
@@ -258,5 +259,32 @@ async def get_workout_history(
             hr_zone5_min=t.hr_zone5_min if t else None,
             target_zone=w.target_zone,
             status=w.status,
+            interval_structure=w.interval_structure,
         ))
     return items
+
+
+@router.get("/{athlete_id}/upcoming", response_model=list[IndividualWorkoutRead])
+async def get_upcoming(
+    athlete_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await _get_accessible_profile(athlete_id, db, current_user)
+    today = date.today()
+    result = await db.execute(
+        select(IndividualWorkout)
+        .where(
+            IndividualWorkout.athlete_id == athlete_id,
+            IndividualWorkout.status.in_(["draft", "published"]),
+            IndividualWorkout.planned_date >= today,
+        )
+        .order_by(IndividualWorkout.planned_date)
+    )
+    workouts = result.scalars().all()
+    # Дедупликация: самая свежая запись на дату
+    seen: dict = {}
+    for w in workouts:
+        if w.planned_date not in seen:
+            seen[w.planned_date] = w
+    return list(seen.values())

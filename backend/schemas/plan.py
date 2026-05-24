@@ -57,7 +57,7 @@ class PlanTemplateUpdate(BaseModel):
 
 class IndividualWorkoutRead(BaseModel):
     id: uuid.UUID
-    template_id: uuid.UUID
+    template_id: uuid.UUID | None
     athlete_id: uuid.UUID
     marker_id_used: uuid.UUID | None
     planned_date: date
@@ -86,6 +86,19 @@ class IndividualWorkoutUpdate(BaseModel):
     workout_subtype: str | None = None
     description: str | None = None
     interval_structure: list[Any] | None = None
+
+
+class IndividualWorkoutCreate(BaseModel):
+    athlete_id: uuid.UUID
+    planned_date: date
+    workout_type: str | None = None
+    workout_subtype: str | None = None
+    target_zone: str | None = None
+    planned_duration_min: int | None = None
+    planned_tss: Decimal | None = None
+    description: str | None = None
+    interval_structure: list[Any] | None = None
+    status: str = "published"
 
 
 class AdaptTaskResponse(BaseModel):

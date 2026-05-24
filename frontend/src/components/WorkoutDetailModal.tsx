@@ -1,8 +1,12 @@
 import { Badge, Box, Divider, Group, Modal, SimpleGrid, Stack, Text, Tooltip } from '@mantine/core'
 import SportIcon, { SPORT_COLOR, SPORT_LABEL } from './SportIcon'
+import IntervalBar from './IntervalBar'
 import { ZONE_BADGE_COLOR, ZONE_HEX } from '../utils/zoneColors'
 
 // ─── Unified workout data interface ──────────────────────────────────────────
+
+export type { IntervalSegment } from './IntervalBar'
+import type { IntervalSegment } from './IntervalBar'
 
 export interface WorkoutDetail {
   id: string
@@ -24,6 +28,7 @@ export interface WorkoutDetail {
   hr_zone3_min?: number | null
   hr_zone4_min?: number | null
   hr_zone5_min?: number | null
+  interval_structure?: IntervalSegment[] | null
   // optional context shown at top of modal
   athlete_name?: string
 }
@@ -128,6 +133,14 @@ export default function WorkoutDetailModal({ workout, onClose }: Props) {
         <Box p="xs" mb="sm" style={{ background: '#f8f9fa', borderRadius: 6 }}>
           <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{workout.description}</Text>
         </Box>
+      )}
+
+      {/* Interval structure */}
+      {workout.interval_structure && workout.interval_structure.length > 0 && (
+        <>
+          <Divider label="Интервальная структура" labelPosition="left" mb="xs" mt="sm" />
+          <IntervalBar segments={workout.interval_structure} />
+        </>
       )}
 
       {/* Fact */}

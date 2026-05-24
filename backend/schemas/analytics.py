@@ -65,8 +65,16 @@ class GroupWeekWorkout(BaseModel):
     actual_tss: Decimal | None
     actual_duration_min: int | None
     distance_km: Decimal | None
+    avg_hr: int | None
+    max_hr: int | None
+    hr_zone1_min: int | None
+    hr_zone2_min: int | None
+    hr_zone3_min: int | None
+    hr_zone4_min: int | None
+    hr_zone5_min: int | None
     status: str
     description: str | None
+    interval_structure: list | None
 
     model_config = {"from_attributes": True}
 

@@ -12,6 +12,7 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { plansApi } from '../api/plans'
+import IntervalBar, { type IntervalSegment } from '../components/IntervalBar'
 import PlanCalendar, { isoDate } from '../components/PlanCalendar'
 import TelemetryUpload from '../components/TelemetryUpload'
 import SportIcon from '../components/SportIcon'
@@ -28,6 +29,7 @@ interface Workout {
   workout_type: string | null
   workout_subtype: string | null
   description: string | null
+  interval_structure: IntervalSegment[] | null
   status: string
 }
 
@@ -72,6 +74,9 @@ function WorkoutPill({ w, compact }: { w: Workout; compact?: boolean }) {
       )}
       {!compact && w.planned_duration_min != null && (
         <Text size="xs" c="dimmed">{w.planned_duration_min} мин</Text>
+      )}
+      {w.interval_structure && w.interval_structure.length > 0 && (
+        <Text size="xs" c="orange" fw={600} style={{ fontSize: 9, lineHeight: 1.2 }}>Инт.</Text>
       )}
     </Box>
   )
@@ -198,6 +203,12 @@ export default function MyPlan() {
                 <Text size="sm" c="dimmed" mb="sm" style={{ fontStyle: 'italic' }}>
                   {selectedWorkout.description}
                 </Text>
+              )}
+
+              {selectedWorkout.interval_structure && selectedWorkout.interval_structure.length > 0 && (
+                <Box mb="sm">
+                  <IntervalBar segments={selectedWorkout.interval_structure} />
+                </Box>
               )}
 
               <TelemetryUpload workoutId={selectedWorkout.id} />

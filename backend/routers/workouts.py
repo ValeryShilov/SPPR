@@ -1,14 +1,16 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.auth import get_current_user, require_coach
 from backend.core.database import get_db
+from backend.models.athlete import AthleteProfile
 from backend.models.group import GroupMembership, TrainingGroup
 from backend.models.plan import IndividualWorkout, PlanTemplate
 from backend.models.user import User
-from backend.schemas.plan import IndividualWorkoutRead, IndividualWorkoutUpdate
+from backend.schemas.plan import IndividualWorkoutCreate, IndividualWorkoutRead, IndividualWorkoutUpdate
 
 router = APIRouter()
 
@@ -27,10 +29,24 @@ async def _get_accessible_workout(
         return workout
 
     if current_user.role == "coach":
-        tmpl = await db.get(PlanTemplate, workout.template_id)
-        group = await db.get(TrainingGroup, tmpl.group_id) if tmpl else None
-        if group is None or group.coach_user_id != current_user.id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
+        if workout.template_id is not None:
+            tmpl = await db.get(PlanTemplate, workout.template_id)
+            group = await db.get(TrainingGroup, tmpl.group_id) if tmpl else None
+            if group is None or group.coach_user_id != current_user.id:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
+        else:
+            # Тренировка создана вручную — проверяем, что атлет входит в группу тренера
+            result = await db.execute(
+                select(GroupMembership)
+                .join(TrainingGroup, GroupMembership.group_id == TrainingGroup.id)
+                .where(
+                    GroupMembership.athlete_id == workout.athlete_id,
+                    GroupMembership.is_active == True,
+                    TrainingGroup.coach_user_id == current_user.id,
+                )
+            )
+            if result.scalar_one_or_none() is None:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
         return workout
 
     # athlete — только своя тренировка
@@ -90,3 +106,70 @@ async def approve_workout(
     await db.commit()
     await db.refresh(workout)
     return workout
+
+
+@router.post("", response_model=IndividualWorkoutRead, status_code=status.HTTP_201_CREATED)
+async def create_workout(
+    data: IndividualWorkoutCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_coach),
+):
+    """Создание индивидуальной тренировки тренером для атлета из его группы."""
+    # Проверяем, что атлет существует
+    athlete = await db.get(AthleteProfile, data.athlete_id)
+    if athlete is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Атлет не найден")
+
+    # Проверяем, что атлет входит в группу данного тренера
+    result = await db.execute(
+        select(GroupMembership)
+        .join(TrainingGroup, GroupMembership.group_id == TrainingGroup.id)
+        .where(
+            GroupMembership.athlete_id == data.athlete_id,
+            GroupMembership.is_active == True,
+            TrainingGroup.coach_user_id == current_user.id,
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Атлет не входит в группу тренера")
+
+    workout = IndividualWorkout(
+        template_id=None,
+        marker_id_used=None,
+        k_qual=None,
+        k_form=None,
+        athlete_id=data.athlete_id,
+        planned_date=data.planned_date,
+        workout_type=data.workout_type,
+        workout_subtype=data.workout_subtype,
+        target_zone=data.target_zone,
+        planned_duration_min=data.planned_duration_min,
+        planned_tss=data.planned_tss,
+        description=data.description,
+        interval_structure=data.interval_structure,
+        status=data.status,
+    )
+    db.add(workout)
+    await db.commit()
+    await db.refresh(workout)
+    return workout
+
+
+@router.delete("/{workout_id}", status_code=status.HTTP_200_OK)
+async def delete_workout(
+    workout_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_coach),
+):
+    """Удаление тренировки тренером (только не завершённые)."""
+    workout = await _get_accessible_workout(workout_id, db, current_user)
+
+    if workout.status == "completed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Нельзя удалить завершённую тренировку",
+        )
+
+    await db.delete(workout)
+    await db.commit()
+    return {"detail": "ok"}

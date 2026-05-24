@@ -594,25 +594,28 @@ async def get_group_week(
     )
     workouts = workouts_result.scalars().all()
 
-    workouts_by_athlete: dict[uuid.UUID, list[IndividualWorkout]] = defaultdict(list)
+    # Один лучший workout на (athlete, date): completed > published > draft
+    _STATUS_PRIORITY = {"completed": 3, "published": 2, "draft": 1}
+    best_by_key: dict[tuple[uuid.UUID, date], IndividualWorkout] = {}
     for w in workouts:
+        key = (w.athlete_id, w.planned_date)
+        existing = best_by_key.get(key)
+        if existing is None or _STATUS_PRIORITY.get(w.status, 0) > _STATUS_PRIORITY.get(existing.status, 0):
+            best_by_key[key] = w
+
+    workouts_by_athlete: dict[uuid.UUID, list[IndividualWorkout]] = defaultdict(list)
+    for w in best_by_key.values():
         workouts_by_athlete[w.athlete_id].append(w)
 
-    # Фактическая телеметрия (TSS, длительность, км)
+    # Фактическая телеметрия
     workout_ids = [w.id for w in workouts]
-    tel_map: dict[uuid.UUID, tuple[Decimal | None, int | None, Decimal | None]] = {}
+    tel_map: dict[uuid.UUID, ActualTelemetry] = {}
     if workout_ids:
         tel_result = await db.execute(
-            select(
-                ActualTelemetry.workout_id,
-                ActualTelemetry.actual_tss,
-                ActualTelemetry.actual_duration_min,
-                ActualTelemetry.distance_km,
-            )
-            .where(ActualTelemetry.workout_id.in_(workout_ids))
+            select(ActualTelemetry).where(ActualTelemetry.workout_id.in_(workout_ids))
         )
-        for row in tel_result:
-            tel_map[row.workout_id] = (row.actual_tss, row.actual_duration_min, row.distance_km)
+        for t in tel_result.scalars().all():
+            tel_map[t.workout_id] = t
 
     # Последние показатели нагрузки (TSB, ATL, CTL) каждого атлета
     latest_date_subq = (
@@ -675,11 +678,19 @@ async def get_group_week(
                     target_zone=w.target_zone,
                     planned_duration_min=w.planned_duration_min,
                     planned_tss=w.planned_tss,
-                    actual_tss=tel_map[w.id][0] if w.id in tel_map else None,
-                    actual_duration_min=tel_map[w.id][1] if w.id in tel_map else None,
-                    distance_km=tel_map[w.id][2] if w.id in tel_map else None,
+                    actual_tss=tel_map[w.id].actual_tss if w.id in tel_map else None,
+                    actual_duration_min=tel_map[w.id].actual_duration_min if w.id in tel_map else None,
+                    distance_km=tel_map[w.id].distance_km if w.id in tel_map else None,
+                    avg_hr=tel_map[w.id].avg_hr if w.id in tel_map else None,
+                    max_hr=tel_map[w.id].max_hr if w.id in tel_map else None,
+                    hr_zone1_min=tel_map[w.id].hr_zone1_min if w.id in tel_map else None,
+                    hr_zone2_min=tel_map[w.id].hr_zone2_min if w.id in tel_map else None,
+                    hr_zone3_min=tel_map[w.id].hr_zone3_min if w.id in tel_map else None,
+                    hr_zone4_min=tel_map[w.id].hr_zone4_min if w.id in tel_map else None,
+                    hr_zone5_min=tel_map[w.id].hr_zone5_min if w.id in tel_map else None,
                     status=w.status,
                     description=w.description,
+                    interval_structure=w.interval_structure,
                 )
                 for w in workouts_by_athlete[p.id]
             ],

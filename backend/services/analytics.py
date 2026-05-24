@@ -23,7 +23,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import NamedTuple
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import settings
@@ -700,6 +700,17 @@ async def adapt_template(template_id: uuid.UUID, db: AsyncSession) -> list[uuid.
     schedule: list[dict] = template.week_schedule or [
         {"workout_type": "run", "zone": default_zone, "duration_min": 60}
     ] * 7
+
+    # Удаляем старые незавершённые тренировки этого шаблона, чтобы не накапливать дубли
+    date_end = template.start_date + timedelta(days=template.duration_days - 1)
+    await db.execute(
+        delete(IndividualWorkout).where(
+            IndividualWorkout.template_id == template_id,
+            IndividualWorkout.status != "completed",
+            IndividualWorkout.planned_date >= template.start_date,
+            IndividualWorkout.planned_date <= date_end,
+        )
+    )
 
     created_ids: list[uuid.UUID] = []
 

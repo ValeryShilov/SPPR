@@ -102,3 +102,4 @@ class WorkoutHistoryItem(BaseModel):
     hr_zone5_min: int | None
     target_zone: str | None
     status: str
+    interval_structure: list | None = None

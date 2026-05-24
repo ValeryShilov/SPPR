@@ -17,6 +17,7 @@ import { useEffect, useState } from 'react'
 import { athletesApi } from '../api/athletes'
 import { plansApi } from '../api/plans'
 import { telemetryApi } from '../api/telemetry'
+import IntervalBar, { type IntervalSegment } from '../components/IntervalBar'
 import TelemetryUpload from '../components/TelemetryUpload'
 import { ZONE_BADGE_COLOR, ZONE_HEX } from '../utils/zoneColors'
 
@@ -31,6 +32,7 @@ interface Workout {
   workout_type: string | null
   workout_subtype: string | null
   description: string | null
+  interval_structure: IntervalSegment[] | null
   status: string
 }
 
@@ -192,6 +194,11 @@ export default function AthleteCabinet() {
                 <Text size="sm" c="dimmed" style={{ fontStyle: 'italic' }}>
                   {todayWorkout.description}
                 </Text>
+              )}
+
+              {/* Интервальная структура */}
+              {todayWorkout.interval_structure && todayWorkout.interval_structure.length > 0 && (
+                <IntervalBar segments={todayWorkout.interval_structure} />
               )}
 
               {/* Кнопка регистрации + Dropzone */}

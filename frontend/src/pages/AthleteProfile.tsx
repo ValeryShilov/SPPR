@@ -27,7 +27,7 @@ import { useParams } from 'react-router-dom'
 import { athletesApi } from '../api/athletes'
 import AlertsPanel from '../components/AlertsPanel'
 import SportIcon, { SPORT_COLOR, SPORT_LABEL } from '../components/SportIcon'
-import WorkoutDetailModal, { type WorkoutDetail } from '../components/WorkoutDetailModal'
+import WorkoutDetailModal, { type IntervalSegment, type WorkoutDetail } from '../components/WorkoutDetailModal'
 import { ZONE_BADGE_COLOR } from '../utils/zoneColors'
 
 // ─── Типы ────────────────────────────────────────────────────────────────────
@@ -76,6 +76,7 @@ interface WorkoutHistoryItem {
   hr_zone5_min: number | null
   target_zone: string | null
   status: string
+  interval_structure: IntervalSegment[] | null
 }
 
 type PeriodType = 'week' | 'month' | 'year' | 'custom'
@@ -551,6 +552,9 @@ function HistoryBlock({ athleteId }: { athleteId: string }) {
                       <Group gap={6} wrap="nowrap">
                         <SportIcon type={stype} size={18} color={SPORT_COLOR[stype]} />
                         <Text size="xs">{SPORT_LABEL[stype] ?? stype}</Text>
+                        {w.interval_structure && w.interval_structure.length > 0 && (
+                          <Badge size="xs" color="orange" variant="light">Инт.</Badge>
+                        )}
                       </Group>
                     </Table.Td>
                     <Table.Td>

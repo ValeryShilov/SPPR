@@ -129,19 +129,12 @@ const mkSeg = (): Segment => ({
   note: '',
 })
 
-const WEEK_DEFAULTS: DayConfig[] = [
-  { workout_type: 'run',      workout_subtype: null, zone: 'Z2', duration_min: 60, description: '', is_interval: false, segments: [] },
-  { workout_type: 'strength', workout_subtype: null, zone: 'Z1', duration_min: 60, description: '', is_interval: false, segments: [] },
-  { workout_type: 'run',      workout_subtype: null, zone: 'Z3', duration_min: 45, description: '', is_interval: false, segments: [] },
-  { workout_type: 'rest',     workout_subtype: null, zone: 'Z1', duration_min: 0,  description: '', is_interval: false, segments: [] },
-  { workout_type: 'run',      workout_subtype: null, zone: 'Z4', duration_min: 40, description: '', is_interval: false, segments: [] },
-  { workout_type: 'run',      workout_subtype: null, zone: 'Z2', duration_min: 90, description: '', is_interval: false, segments: [] },
-  { workout_type: 'rest',     workout_subtype: null, zone: 'Z1', duration_min: 0,  description: '', is_interval: false, segments: [] },
-]
 
-const makeDefaultDay = (idx: number): DayConfig => ({ ...WEEK_DEFAULTS[idx % 7] })
-const makeDefaultSchedule = (n: number): DayConfig[] =>
-  Array.from({ length: n }, (_, i) => makeDefaultDay(i))
+const makeEmptySchedule = (n: number): DayConfig[] =>
+  Array.from({ length: n }, (): DayConfig => ({
+    workout_type: 'rest', workout_subtype: null, zone: 'Z1',
+    duration_min: 0, description: '', is_interval: false, segments: [],
+  }))
 
 function fromBackend(saved: Record<string, unknown>[]): DayConfig[] {
   return saved.map((d) => {
@@ -408,7 +401,8 @@ export default function TemplateEditor() {
       setDurationDays(template.duration_days)
       setDescr(template.description ?? '')
       const n = template.duration_days
-      setSchedule(template.week_schedule ? fromBackend(template.week_schedule) : makeDefaultSchedule(n))
+      setSchedule(template.week_schedule ? fromBackend(template.week_schedule) : makeEmptySchedule(n))
+      setCalView(n <= 7 ? 'week' : 'month')
       if (template.start_date) {
         const d = new Date(template.start_date + 'T00:00:00')
         if (!isNaN(d.getTime())) setCalDisplay(d)
@@ -486,10 +480,14 @@ export default function TemplateEditor() {
   const applyDuration = () => {
     const n = Math.max(1, Math.min(365, Number(durationDays) || 1))
     setDurationDays(n)
+    setCalView(n <= 7 ? 'week' : 'month')
     setSchedule((prev) => {
       if (n === prev.length) return prev
       if (n < prev.length) return prev.slice(0, n)
-      return [...prev, ...Array.from({ length: n - prev.length }, (_, i) => makeDefaultDay(prev.length + i))]
+      return [...prev, ...Array.from({ length: n - prev.length }, (): DayConfig => ({
+        workout_type: 'rest', workout_subtype: null, zone: 'Z1',
+        duration_min: 0, description: '', is_interval: false, segments: [],
+      }))]
     })
   }
 

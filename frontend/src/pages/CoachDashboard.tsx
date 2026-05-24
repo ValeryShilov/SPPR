@@ -18,7 +18,7 @@ import { useNavigate } from 'react-router-dom'
 import { analyticsApi } from '../api/analytics'
 import { groupsApi } from '../api/groups'
 import SportIcon from '../components/SportIcon'
-import WorkoutDetailModal, { type WorkoutDetail } from '../components/WorkoutDetailModal'
+import WorkoutDetailModal, { type IntervalSegment, type WorkoutDetail } from '../components/WorkoutDetailModal'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,8 +35,16 @@ interface WeekWorkout {
   actual_tss: number | null
   actual_duration_min: number | null
   distance_km: number | null
+  avg_hr: number | null
+  max_hr: number | null
+  hr_zone1_min: number | null
+  hr_zone2_min: number | null
+  hr_zone3_min: number | null
+  hr_zone4_min: number | null
+  hr_zone5_min: number | null
   status: string
   description: string | null
+  interval_structure: IntervalSegment[] | null
 }
 
 interface WeekAthlete {
@@ -169,6 +177,9 @@ function WorkoutCard({ w, onClick }: { w: WeekWorkout; onClick: () => void }) {
               <Text size="xs" c="dimmed" style={{ lineHeight: 1.3 }}>
                 TSS {Number(w.planned_tss).toFixed(0)}
               </Text>
+            )}
+            {w.interval_structure && w.interval_structure.length > 0 && (
+              <Text size="xs" c="orange" fw={600} style={{ lineHeight: 1.3 }}>Интервал</Text>
             )}
           </>
         )}

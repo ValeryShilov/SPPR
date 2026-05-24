@@ -32,8 +32,8 @@ class IndividualWorkout(Base):
     __tablename__ = "individual_workouts"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    template_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("plan_templates.id"), nullable=False
+    template_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_templates.id"), nullable=True
     )
     athlete_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("athlete_profiles.id"), nullable=False
