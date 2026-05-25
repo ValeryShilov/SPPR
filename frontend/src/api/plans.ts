@@ -11,8 +11,12 @@ export const plansApi = {
   approveAll: (id: string) => apiClient.post(`/templates/${id}/approve-all`).then((r) => r.data),
 
   getWorkout: (id: string) => apiClient.get(`/workouts/${id}`).then((r) => r.data),
+  createWorkout: (data: unknown) => apiClient.post('/workouts', data).then((r) => r.data),
+  createSelfWorkout: (data: { planned_date: string; workout_type: string | null }) =>
+    apiClient.post('/workouts/self', data).then((r) => r.data),
   updateWorkout: (id: string, data: unknown) =>
     apiClient.put(`/workouts/${id}`, data).then((r) => r.data),
+  deleteWorkout: (id: string) => apiClient.delete(`/workouts/${id}`).then((r) => r.data),
   approveWorkout: (id: string) => apiClient.post(`/workouts/${id}/approve`).then((r) => r.data),
 
   getMyPlan: () => apiClient.get('/my-plan').then((r) => r.data),

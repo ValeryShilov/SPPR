@@ -16,10 +16,11 @@ const COACH_NAV = [
 ]
 
 const ATHLETE_NAV = [
-  { label: 'Сегодня',  to: '/dashboard' },
-  { label: 'Мой план', to: '/my-plan'   },
-  { label: 'Дневник',  to: '/metrics'   },
-  { label: 'Профиль',  to: '/profile'   },
+  { label: 'Сегодня',    to: '/dashboard'    },
+  { label: 'Мой план',   to: '/my-plan'      },
+  { label: 'История',    to: '/my-history'   },
+  { label: 'Аналитика',  to: '/my-analytics' },
+  { label: 'Дневник',    to: '/metrics'      },
 ]
 
 const ROLE_LABEL: Record<string, string> = {
@@ -62,8 +63,9 @@ export default function AppHeader() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [hoveredNav, setHoveredNav] = useState<string | null>(null)
 
-  const nav      = user?.role === 'athlete' ? ATHLETE_NAV : COACH_NAV
-  const initials = (user?.email?.[0] ?? '?').toUpperCase()
+  const nav         = user?.role === 'athlete' ? ATHLETE_NAV : COACH_NAV
+  const displayName = user?.full_name ?? user?.email ?? '?'
+  const initials    = displayName.split(' ').map((p: string) => p[0] ?? '').join('').toUpperCase().slice(0, 2) || '?'
 
   const isActive = (to: string) =>
     location.pathname === to || location.pathname.startsWith(to + '/')
@@ -84,17 +86,19 @@ export default function AppHeader() {
       }}>
 
         {/* Left: logo + name */}
-        <Group gap={10} style={{ flexShrink: 0 }}>
-          <div style={{
-            width: 36, height: 36, backgroundColor: '#C8102E', borderRadius: 8,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-          }}>
-            <SportIcon type="ski" size={22} color="#fff" />
-          </div>
-          <Text fw={700} size="md" style={{ color: '#fff', letterSpacing: 0.3, whiteSpace: 'nowrap' }}>
-            СпортПлан
-          </Text>
-        </Group>
+        <UnstyledButton onClick={() => navigate('/dashboard')} style={{ flexShrink: 0 }}>
+          <Group gap={10}>
+            <div style={{
+              width: 36, height: 36, backgroundColor: '#C8102E', borderRadius: 8,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+            }}>
+              <SportIcon type="ski" size={22} color="#fff" />
+            </div>
+            <Text fw={700} size="md" style={{ color: '#fff', letterSpacing: 0.3, whiteSpace: 'nowrap' }}>
+              СпортПлан
+            </Text>
+          </Group>
+        </UnstyledButton>
 
         {/* Center: nav links (desktop) */}
         {!isMobile && (
@@ -133,20 +137,28 @@ export default function AppHeader() {
 
           {!isMobile && (
             <>
-              <Avatar size={32} radius="xl"
-                style={{ background: '#C8102E', color: '#fff', fontWeight: 700, fontSize: 14 }}>
-                {initials}
-              </Avatar>
+              <UnstyledButton
+                onClick={() => {
+                  if (user?.role === 'athlete') navigate('/profile')
+                  else if (user?.role === 'coach') navigate('/coach-profile')
+                }}
+                style={{ display: 'flex', alignItems: 'center', gap: 10 }}
+              >
+                <Avatar size={32} radius="xl"
+                  style={{ background: '#C8102E', color: '#fff', fontWeight: 700, fontSize: 14 }}>
+                  {initials}
+                </Avatar>
 
-              <div style={{ lineHeight: 1.3 }}>
-                <Text size="xs" fw={600}
-                  style={{ color: '#fff', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {user?.email}
-                </Text>
-                <Badge size="xs" color="red" variant="light" style={{ marginTop: 2 }}>
-                  {ROLE_LABEL[user?.role ?? ''] ?? user?.role}
-                </Badge>
-              </div>
+                <div style={{ lineHeight: 1.3 }}>
+                  <Text size="xs" fw={600}
+                    style={{ color: '#fff', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {displayName}
+                  </Text>
+                  <Badge size="xs" color="red" variant="light" style={{ marginTop: 2 }}>
+                    {ROLE_LABEL[user?.role ?? ''] ?? user?.role}
+                  </Badge>
+                </div>
+              </UnstyledButton>
 
               <UnstyledButton
                 onClick={handleLogout}
@@ -190,7 +202,7 @@ export default function AppHeader() {
               {initials}
             </Avatar>
             <div style={{ lineHeight: 1.3 }}>
-              <Text size="sm" fw={600}>{user?.email}</Text>
+              <Text size="sm" fw={600}>{displayName}</Text>
               <Badge size="xs" color="red" variant="light" style={{ marginTop: 2 }}>
                 {ROLE_LABEL[user?.role ?? ''] ?? user?.role}
               </Badge>

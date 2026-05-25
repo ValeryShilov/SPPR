@@ -21,5 +21,7 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
 
-    athlete_profile: Mapped["AthleteProfile"] = relationship(back_populates="user", uselist=False)
+    athlete_profile: Mapped["AthleteProfile"] = relationship(
+        back_populates="user", uselist=False, foreign_keys="AthleteProfile.user_id"
+    )
     training_groups: Mapped[list["TrainingGroup"]] = relationship(back_populates="coach")

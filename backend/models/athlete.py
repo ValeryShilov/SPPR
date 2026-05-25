@@ -32,9 +32,15 @@ class AthleteProfile(Base):
     birth_date: Mapped[date] = mapped_column(DATE, nullable=False)
     gender: Mapped[str] = mapped_column(SAEnum("m", "f", name="gender_enum"), nullable=False)
     qualification: Mapped[str | None] = mapped_column(String(50))
+    coach_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    training_goal_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    target_event_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    target_event_date: Mapped[date | None] = mapped_column(DATE, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
 
-    user: Mapped["User"] = relationship(back_populates="athlete_profile")
+    user: Mapped["User"] = relationship(back_populates="athlete_profile", foreign_keys="AthleteProfile.user_id")
     group_memberships: Mapped[list["GroupMembership"]] = relationship(back_populates="athlete")
     physiological_markers: Mapped[list["PhysiologicalMarker"]] = relationship(back_populates="athlete")
     individual_workouts: Mapped[list["IndividualWorkout"]] = relationship(back_populates="athlete")

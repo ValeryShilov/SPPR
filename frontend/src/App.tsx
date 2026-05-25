@@ -1,13 +1,22 @@
-import { Component, type ReactNode } from 'react'
+import { Text } from '@mantine/core'
+import { useQuery } from '@tanstack/react-query'
+import { Component, useEffect, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { athletesApi } from './api/athletes'
+import { authApi } from './api/auth'
 import AppFooter from './components/AppFooter'
 import AppHeader from './components/AppHeader'
 import { useAuth } from './hooks/useAuth'
 import AthleteCabinet from './pages/AthleteCabinet'
+import AthleteAnalyticsPage from './pages/AthleteAnalyticsPage'
+import WorkoutHistoryPage from './pages/WorkoutHistoryPage'
 import AthleteProfile from './pages/AthleteProfile'
 import AthletesPage from './pages/AthletesPage'
 import CoachAnalyticsPage from './pages/CoachAnalyticsPage'
 import CoachDashboard from './pages/CoachDashboard'
+import CoachProfilePage from './pages/CoachProfilePage'
+import AthleteSelfProfile from './pages/AthleteSelfProfile'
+import CreateProfilePage from './pages/CreateProfilePage'
 import GroupDetail from './pages/GroupDetail'
 import GroupList from './pages/GroupList'
 import LoadAnalytics from './pages/LoadAnalytics'
@@ -16,6 +25,7 @@ import Matrix from './pages/Matrix'
 import MetricsPage from './pages/MetricsPage'
 import MyPlan from './pages/MyPlan'
 import PlanningPage from './pages/PlanningPage'
+import RegisterPage from './pages/RegisterPage'
 import SettingsPage from './pages/SettingsPage'
 import TemplateEditor from './pages/TemplateEditor'
 
@@ -44,6 +54,16 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 // ─── Authenticated layout ─────────────────────────────────────────────────────
 
 function AuthenticatedLayout({ children }: { children: ReactNode }) {
+  const { user, setUser } = useAuth()
+
+  useEffect(() => {
+    if (user && user.full_name === undefined) {
+      authApi.me().then((me) => {
+        setUser({ ...user, full_name: me.full_name ?? null })
+      }).catch(() => {})
+    }
+  }, [])
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
       <AppHeader />
@@ -65,6 +85,24 @@ function PrivateRoute({ children, roles }: { children: JSX.Element; roles?: stri
   return <AuthenticatedLayout>{children}</AuthenticatedLayout>
 }
 
+// ─── Athlete onboarding guard ─────────────────────────────────────────────────
+
+function AthleteOnboardingGuard({ children }: { children: ReactNode }) {
+  const { user } = useAuth()
+  const { isLoading, isError } = useQuery({
+    queryKey: ['athlete-me'],
+    queryFn: athletesApi.me,
+    enabled: user?.role === 'athlete',
+    retry: false,
+    staleTime: 60_000,
+  })
+
+  if (user?.role !== 'athlete') return <>{children}</>
+  if (isLoading) return <Text p="xl">Загрузка...</Text>
+  if (isError) return <Navigate to="/create-profile" replace />
+  return <>{children}</>
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -74,19 +112,23 @@ export default function App() {
     <BrowserRouter>
       <ErrorBoundary>
         <Routes>
-          <Route path="/login" element={<Login />} />
+          <Route path="/login"    element={<Login />} />
+          <Route path="/register" element={<RegisterPage />} />
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
           <Route
             path="/dashboard"
             element={
               <PrivateRoute>
-                {user?.role === 'athlete' ? <AthleteCabinet /> : <CoachDashboard />}
+                <AthleteOnboardingGuard>
+                  {user?.role === 'athlete' ? <AthleteCabinet /> : <CoachDashboard />}
+                </AthleteOnboardingGuard>
               </PrivateRoute>
             }
           />
 
           {/* Тренер */}
+          <Route path="/coach-profile" element={<PrivateRoute roles={['coach']}><CoachProfilePage /></PrivateRoute>} />
           <Route path="/athletes"   element={<PrivateRoute roles={['coach']}><AthletesPage /></PrivateRoute>} />
           <Route path="/analytics"  element={<PrivateRoute roles={['coach']}><CoachAnalyticsPage /></PrivateRoute>} />
           <Route path="/settings"   element={<PrivateRoute><SettingsPage /></PrivateRoute>} />
@@ -99,8 +141,12 @@ export default function App() {
             element={<PrivateRoute roles={['coach']}><Matrix /></PrivateRoute>} />
 
           {/* Спортсмен */}
-          <Route path="/my-plan" element={<PrivateRoute roles={['athlete']}><MyPlan /></PrivateRoute>} />
-          <Route path="/metrics" element={<PrivateRoute roles={['athlete']}><MetricsPage /></PrivateRoute>} />
+          <Route path="/create-profile" element={<PrivateRoute roles={['athlete']}><CreateProfilePage /></PrivateRoute>} />
+          <Route path="/profile" element={<PrivateRoute roles={['athlete']}><AthleteOnboardingGuard><AthleteSelfProfile /></AthleteOnboardingGuard></PrivateRoute>} />
+          <Route path="/my-plan"      element={<PrivateRoute roles={['athlete']}><AthleteOnboardingGuard><MyPlan /></AthleteOnboardingGuard></PrivateRoute>} />
+          <Route path="/metrics"      element={<PrivateRoute roles={['athlete']}><AthleteOnboardingGuard><MetricsPage /></AthleteOnboardingGuard></PrivateRoute>} />
+          <Route path="/my-analytics" element={<PrivateRoute roles={['athlete']}><AthleteOnboardingGuard><AthleteAnalyticsPage /></AthleteOnboardingGuard></PrivateRoute>} />
+          <Route path="/my-history"   element={<PrivateRoute roles={['athlete']}><AthleteOnboardingGuard><WorkoutHistoryPage /></AthleteOnboardingGuard></PrivateRoute>} />
 
           {/* Общие */}
           <Route path="/athletes/:id"        element={<PrivateRoute><AthleteProfile /></PrivateRoute>} />

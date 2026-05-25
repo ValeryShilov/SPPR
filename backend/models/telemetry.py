@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import TIMESTAMP, Enum as SAEnum, ForeignKey, Integer, Numeric, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.core.database import Base
@@ -29,6 +29,9 @@ class ActualTelemetry(Base):
     hr_zone3_min: Mapped[int | None] = mapped_column(Integer)
     hr_zone4_min: Mapped[int | None] = mapped_column(Integer)
     hr_zone5_min: Mapped[int | None] = mapped_column(Integer)
+    rpe: Mapped[int | None] = mapped_column(Integer)
+    comment: Mapped[str | None] = mapped_column(Text)
+    timeseries: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     raw_file_path: Mapped[str | None] = mapped_column(Text)
     recorded_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
 

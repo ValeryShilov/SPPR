@@ -1,4 +1,4 @@
-import { Alert, Button, Container, PasswordInput, Stack, TextInput, Title } from '@mantine/core'
+import { Alert, Button, Container, PasswordInput, Stack, Text, TextInput, Title } from '@mantine/core'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { authApi } from '../api/auth'
@@ -28,7 +28,7 @@ export default function Login() {
       const me = await authApi.me()
 
       // 4. Сохраняем полный объект через контекст
-      setUser({ id: me.id, email: me.email, role: me.role, token: data.access_token })
+      setUser({ id: me.id, email: me.email, full_name: me.full_name ?? null, role: me.role, token: data.access_token })
       navigate('/dashboard')
     } catch (err: unknown) {
       localStorage.removeItem('auth_user')
@@ -68,6 +68,12 @@ export default function Login() {
           <Button type="submit" loading={loading} fullWidth mt="sm">
             Войти
           </Button>
+          <Text size="sm" ta="center" c="dimmed">
+            Нет аккаунта?{' '}
+            <Text span c="blue" style={{ cursor: 'pointer' }} onClick={() => navigate('/register')}>
+              Зарегистрироваться
+            </Text>
+          </Text>
         </Stack>
       </form>
     </Container>

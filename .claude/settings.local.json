@@ -4,7 +4,9 @@
       "Bash(docker exec *)",
       "PowerShell(docker restart sppr-frontend-1)",
       "Bash(docker restart *)",
-      "Bash(docker cp *)"
+      "Bash(docker cp *)",
+      "Bash(cd /d d:\\\\SPPR)",
+      "Bash(docker compose *)"
     ]
   }
 }

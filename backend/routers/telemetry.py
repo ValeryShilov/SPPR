@@ -7,19 +7,26 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.auth import get_current_user, require_athlete
+from backend.core.auth import get_current_user, require_any, require_athlete
 from backend.core.celery_app import celery_app
 from backend.core.database import get_db
 from backend.models.athlete import AthleteProfile
 from backend.models.plan import IndividualWorkout
 from backend.models.user import User
 from backend.schemas.plan import IndividualWorkoutRead
-from backend.schemas.telemetry import TelemetryTaskStatus, TelemetryUploadResponse
+from backend.models.telemetry import ActualTelemetry
+from backend.schemas.telemetry import (
+    ActualTelemetryManualCreate,
+    ActualTelemetryNotesUpdate,
+    ActualTelemetryRead,
+    TelemetryTaskStatus,
+    TelemetryUploadResponse,
+)
 from backend.tasks.telemetry import parse_telemetry_file
 
 router = APIRouter()
 
-_UPLOAD_DIR = Path("/tmp/sppr_uploads")
+_UPLOAD_DIR = Path("/app/uploads")
 _ALLOWED_FORMATS = {"fit", "gpx", "tcx", "csv"}
 
 
@@ -47,7 +54,7 @@ async def get_my_plan(
         select(IndividualWorkout)
         .where(
             IndividualWorkout.athlete_id == profile.id,
-            IndividualWorkout.status == "published",
+            IndividualWorkout.status.in_(["published", "completed"]),
             IndividualWorkout.planned_date >= date.today(),
         )
         .order_by(IndividualWorkout.planned_date, IndividualWorkout.updated_at.desc())
@@ -98,6 +105,87 @@ async def upload_telemetry(
         task_id=task.id,
         message=f"Файл принят, обработка запущена (задача {task.id})",
     )
+
+
+@router.get("/telemetry/workout/{workout_id}", response_model=ActualTelemetryRead | None)
+async def get_workout_telemetry(
+    workout_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_any),
+):
+    workout = await db.get(IndividualWorkout, workout_id)
+    if workout is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Тренировка не найдена")
+    # Атлет может смотреть только свои тренировки
+    if current_user.role == "athlete":
+        profile = await _get_profile(current_user.id, db)
+        if workout.athlete_id != profile.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
+    result = await db.execute(
+        select(ActualTelemetry).where(ActualTelemetry.workout_id == workout_id)
+    )
+    return result.scalar_one_or_none()
+
+
+@router.patch("/telemetry/workout/{workout_id}/notes", response_model=ActualTelemetryRead)
+async def update_telemetry_notes(
+    workout_id: uuid.UUID,
+    data: ActualTelemetryNotesUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_athlete),
+):
+    profile = await _get_profile(current_user.id, db)
+    workout = await db.get(IndividualWorkout, workout_id)
+    if workout is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Тренировка не найдена")
+    if workout.athlete_id != profile.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
+    result = await db.execute(
+        select(ActualTelemetry).where(ActualTelemetry.workout_id == workout_id)
+    )
+    telemetry = result.scalar_one_or_none()
+    if telemetry is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Телеметрия не найдена")
+    telemetry.rpe = data.rpe
+    telemetry.comment = data.comment
+    workout.status = "completed"
+    await db.commit()
+    await db.refresh(telemetry)
+    return telemetry
+
+
+@router.post("/telemetry/manual", response_model=ActualTelemetryRead)
+async def manual_telemetry(
+    data: ActualTelemetryManualCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_athlete),
+):
+    profile = await _get_profile(current_user.id, db)
+
+    workout = await db.get(IndividualWorkout, data.workout_id)
+    if workout is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Тренировка не найдена")
+    if workout.athlete_id != profile.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
+
+    result = await db.execute(
+        select(ActualTelemetry).where(ActualTelemetry.workout_id == data.workout_id)
+    )
+    telemetry = result.scalar_one_or_none()
+    fields = data.model_dump(exclude={"workout_id"})
+
+    if telemetry is None:
+        telemetry = ActualTelemetry(workout_id=data.workout_id, source="manual", **fields)
+        db.add(telemetry)
+    else:
+        telemetry.source = "manual"
+        for k, v in fields.items():
+            setattr(telemetry, k, v)
+
+    workout.status = "completed"
+    await db.commit()
+    await db.refresh(telemetry)
+    return telemetry
 
 
 @router.get("/telemetry/status/{task_id}", response_model=TelemetryTaskStatus)

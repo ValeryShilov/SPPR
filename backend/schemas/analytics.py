@@ -129,3 +129,4 @@ class CoachAthlete(BaseModel):
     active_alerts: int
     alert_severity: str | None
     last_workout_status: str | None
+    coach_user_id: uuid.UUID | None = None

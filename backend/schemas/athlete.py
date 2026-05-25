@@ -12,6 +12,10 @@ class AthleteProfileRead(BaseModel):
     birth_date: date
     gender: str
     qualification: str | None
+    coach_user_id: uuid.UUID | None = None
+    training_goal_type: str | None = None
+    target_event_name: str | None = None
+    target_event_date: date | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -23,6 +27,9 @@ class AthleteProfileCreate(BaseModel):
     birth_date: date
     gender: str  # "m" | "f"
     qualification: str | None = None
+    training_goal_type: str | None = None
+    target_event_name: str | None = None
+    target_event_date: date | None = None
 
 
 class AthleteProfileUpdate(BaseModel):
@@ -31,6 +38,10 @@ class AthleteProfileUpdate(BaseModel):
     birth_date: date | None = None
     gender: str | None = None
     qualification: str | None = None
+    coach_user_id: uuid.UUID | None = None
+    training_goal_type: str | None = None
+    target_event_name: str | None = None
+    target_event_date: date | None = None
 
 
 class PhysiologicalMarkerRead(BaseModel):

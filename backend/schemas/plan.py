@@ -7,9 +7,10 @@ from pydantic import BaseModel
 
 
 class SegmentConfig(BaseModel):
-    seg_type: str           # warmup / work / rest_seg / cooldown
-    zone: str               # Z1–Z5
-    duration_min: int
+    seg_type: str                    # warmup / work / rest_seg / cooldown
+    zone: str                        # Z1–Z5
+    duration_min: int | None = None  # задан либо duration_min, либо distance_km
+    distance_km: float | None = None
     repeats: int = 1
     note: str | None = None
 
@@ -86,6 +87,11 @@ class IndividualWorkoutUpdate(BaseModel):
     workout_subtype: str | None = None
     description: str | None = None
     interval_structure: list[Any] | None = None
+
+
+class SelfWorkoutCreate(BaseModel):
+    planned_date: date
+    workout_type: str | None = None
 
 
 class IndividualWorkoutCreate(BaseModel):

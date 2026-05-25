@@ -10,7 +10,7 @@ from backend.models.athlete import AthleteProfile
 from backend.models.group import GroupMembership, TrainingGroup
 from backend.models.plan import IndividualWorkout, PlanTemplate
 from backend.models.user import User
-from backend.schemas.plan import IndividualWorkoutCreate, IndividualWorkoutRead, IndividualWorkoutUpdate
+from backend.schemas.plan import IndividualWorkoutCreate, IndividualWorkoutRead, IndividualWorkoutUpdate, SelfWorkoutCreate
 
 router = APIRouter()
 
@@ -103,6 +103,42 @@ async def approve_workout(
         )
 
     workout.status = "published"
+    await db.commit()
+    await db.refresh(workout)
+    return workout
+
+
+@router.post("/self", response_model=IndividualWorkoutRead, status_code=status.HTTP_201_CREATED)
+async def create_self_workout(
+    data: SelfWorkoutCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Атлет самостоятельно регистрирует тренировку вне плана."""
+    result = await db.execute(
+        select(AthleteProfile).where(AthleteProfile.user_id == current_user.id)
+    )
+    athlete = result.scalar_one_or_none()
+    if athlete is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Профиль атлета не найден")
+
+    workout = IndividualWorkout(
+        template_id=None,
+        marker_id_used=None,
+        k_qual=None,
+        k_form=None,
+        athlete_id=athlete.id,
+        planned_date=data.planned_date,
+        workout_type=data.workout_type,
+        workout_subtype=None,
+        target_zone=None,
+        planned_duration_min=None,
+        planned_tss=None,
+        description=None,
+        interval_structure=None,
+        status="completed",
+    )
+    db.add(workout)
     await db.commit()
     await db.refresh(workout)
     return workout

@@ -14,9 +14,37 @@ class ActualTelemetryRead(BaseModel):
     avg_hr: int | None
     max_hr: int | None
     actual_tss: Decimal | None
+    hr_zone1_min: int | None = None
+    hr_zone2_min: int | None = None
+    hr_zone3_min: int | None = None
+    hr_zone4_min: int | None = None
+    hr_zone5_min: int | None = None
+    rpe: int | None = None
+    comment: str | None = None
+    timeseries: list | None = None
     recorded_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ActualTelemetryNotesUpdate(BaseModel):
+    rpe: int | None = None
+    comment: str | None = None
+
+
+class ActualTelemetryManualCreate(BaseModel):
+    workout_id: uuid.UUID
+    actual_duration_min: int | None = None
+    distance_km: Decimal | None = None
+    avg_hr: int | None = None
+    max_hr: int | None = None
+    hr_zone1_min: int | None = None
+    hr_zone2_min: int | None = None
+    hr_zone3_min: int | None = None
+    hr_zone4_min: int | None = None
+    hr_zone5_min: int | None = None
+    rpe: int | None = None
+    comment: str | None = None
 
 
 class TelemetryUploadResponse(BaseModel):

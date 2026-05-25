@@ -12,10 +12,13 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { plansApi } from '../api/plans'
+import { telemetryApi } from '../api/telemetry'
 import IntervalBar, { type IntervalSegment } from '../components/IntervalBar'
 import PlanCalendar, { isoDate } from '../components/PlanCalendar'
 import TelemetryUpload from '../components/TelemetryUpload'
+import WorkoutChartsModal, { type TimePoint } from '../components/WorkoutChartsModal'
 import SportIcon from '../components/SportIcon'
+import { calcPaceSpeed, PACE_TYPES } from '../utils/pace'
 import { ZONE_BADGE_COLOR } from '../utils/zoneColors'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -31,6 +34,25 @@ interface Workout {
   description: string | null
   interval_structure: IntervalSegment[] | null
   status: string
+}
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface ActualTelemetry {
+  source: string
+  actual_duration_min: number | null
+  distance_km: number | null
+  avg_hr: number | null
+  max_hr: number | null
+  actual_tss: number | null
+  hr_zone1_min: number | null
+  hr_zone2_min: number | null
+  hr_zone3_min: number | null
+  hr_zone4_min: number | null
+  hr_zone5_min: number | null
+  rpe: number | null
+  comment: string | null
+  timeseries?: TimePoint[] | null
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -85,9 +107,10 @@ function WorkoutPill({ w, compact }: { w: Workout; compact?: boolean }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function MyPlan() {
-  const [view, setView]               = useState<'month' | 'week'>('month')
+  const [view, setView]               = useState<'month' | 'week'>('week')
   const [displayDate, setDisplayDate] = useState<Date>(new Date())
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  const [chartsOpen, setChartsOpen]   = useState(false)
 
   const { data: workouts = [], isLoading } = useQuery<Workout[]>({
     queryKey: ['my-plan'],
@@ -97,6 +120,14 @@ export default function MyPlan() {
   // ── Build lookup map ───────────────────────────────────────────────────────
   const workoutByDate = new Map<string, Workout>()
   for (const w of workouts) workoutByDate.set(w.planned_date, w)
+
+  const selectedWorkout = selectedDate ? workoutByDate.get(selectedDate) : undefined
+
+  const { data: selectedTelemetry } = useQuery<ActualTelemetry | null>({
+    queryKey: ['workout-telemetry', selectedWorkout?.id],
+    queryFn: () => telemetryApi.getWorkoutTelemetry(selectedWorkout!.id) as Promise<ActualTelemetry | null>,
+    enabled: !!selectedWorkout?.id,
+  })
 
   // ── Navigation ────────────────────────────────────────────────────────────
   const navigate = (dir: -1 | 1) => {
@@ -118,8 +149,6 @@ export default function MyPlan() {
     if (!w) return null
     return <WorkoutPill w={w} compact={view === 'month'} />
   }
-
-  const selectedWorkout = selectedDate ? workoutByDate.get(selectedDate) : undefined
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -170,10 +199,7 @@ export default function MyPlan() {
               <Group gap="xl" mb="sm">
                 {selectedWorkout.target_zone && (
                   <Stack gap={0} align="center">
-                    <Badge
-                      color={ZONE_BADGE_COLOR[selectedWorkout.target_zone] ?? 'gray'}
-                      size="lg"
-                    >
+                    <Badge color={ZONE_BADGE_COLOR[selectedWorkout.target_zone] ?? 'gray'} size="lg">
                       {selectedWorkout.target_zone}
                     </Badge>
                     <Text size="xs" c="dimmed" mt={2}>зона</Text>
@@ -182,7 +208,7 @@ export default function MyPlan() {
                 {selectedWorkout.planned_duration_min != null && (
                   <Stack gap={0} align="center">
                     <Text fw={700} size="xl" lh={1}>{selectedWorkout.planned_duration_min}</Text>
-                    <Text size="xs" c="dimmed">мин</Text>
+                    <Text size="xs" c="dimmed">мин (план)</Text>
                   </Stack>
                 )}
                 {selectedWorkout.planned_tss != null && (
@@ -191,10 +217,7 @@ export default function MyPlan() {
                     <Text size="xs" c="dimmed">TSS</Text>
                   </Stack>
                 )}
-                <Badge
-                  color={STATUS_META[selectedWorkout.status]?.color ?? 'gray'}
-                  variant="light"
-                >
+                <Badge color={STATUS_META[selectedWorkout.status]?.color ?? 'gray'} variant="light">
                   {STATUS_META[selectedWorkout.status]?.label ?? selectedWorkout.status}
                 </Badge>
               </Group>
@@ -211,10 +234,87 @@ export default function MyPlan() {
                 </Box>
               )}
 
-              <TelemetryUpload workoutId={selectedWorkout.id} />
+              {/* Фактические данные */}
+              {selectedTelemetry && (
+                <Box mb="sm" p="sm" style={{ background: '#f8f9fa', borderRadius: 8 }}>
+                  <Group gap="xs" mb="xs">
+                    <Badge color="green" variant="filled" size="sm">Выполнено ✓</Badge>
+                    <Text size="xs" c="dimmed">
+                      {selectedTelemetry.source === 'imported' ? 'из файла' : 'вручную'}
+                    </Text>
+                  </Group>
+                  <Group gap="xl">
+                    {selectedTelemetry.actual_duration_min != null && (
+                      <Stack gap={0} align="center">
+                        <Text fw={700} size="lg" lh={1}>{selectedTelemetry.actual_duration_min}</Text>
+                        <Text size="xs" c="dimmed">мин (факт.)</Text>
+                      </Stack>
+                    )}
+                    {selectedTelemetry.distance_km != null && (
+                      <Stack gap={0} align="center">
+                        <Text fw={700} size="lg" lh={1}>{Number(selectedTelemetry.distance_km).toFixed(1)}</Text>
+                        <Text size="xs" c="dimmed">км</Text>
+                      </Stack>
+                    )}
+                    {selectedTelemetry.avg_hr != null && (
+                      <Stack gap={0} align="center">
+                        <Text fw={700} size="lg" lh={1}>{selectedTelemetry.avg_hr}</Text>
+                        <Text size="xs" c="dimmed">ЧСС ср.</Text>
+                      </Stack>
+                    )}
+                    {selectedWorkout.workout_type && PACE_TYPES.has(selectedWorkout.workout_type) && (() => {
+                      const pace = calcPaceSpeed(
+                        selectedTelemetry.actual_duration_min ?? '',
+                        selectedTelemetry.distance_km ?? '',
+                        selectedWorkout.workout_type!,
+                      )
+                      return pace ? (
+                        <Stack gap={0} align="center">
+                          <Text fw={700} size="lg" lh={1}>{pace}</Text>
+                          <Text size="xs" c="dimmed">
+                            {selectedWorkout.workout_type === 'run' ? 'темп' : 'скорость'}
+                          </Text>
+                        </Stack>
+                      ) : null
+                    })()}
+                    {selectedTelemetry.rpe != null && (
+                      <Stack gap={0} align="center">
+                        <Text fw={700} size="lg" lh={1}>
+                          {selectedTelemetry.rpe}<Text span size="xs" c="dimmed">/10</Text>
+                        </Text>
+                        <Text size="xs" c="dimmed">самочувствие</Text>
+                      </Stack>
+                    )}
+                  </Group>
+                  {selectedTelemetry.comment && (
+                    <Text size="sm" c="dimmed" mt="xs" style={{ fontStyle: 'italic' }}>
+                      {selectedTelemetry.comment}
+                    </Text>
+                  )}
+                  {selectedTelemetry.timeseries && selectedTelemetry.timeseries.length > 0 && (
+                    <Button
+                      size="xs" variant="subtle" color="blue" mt="xs"
+                      onClick={() => setChartsOpen(true)}
+                    >
+                      📈 Показать графики
+                    </Button>
+                  )}
+                </Box>
+              )}
+
+              <TelemetryUpload workoutId={selectedWorkout.id} workoutType={selectedWorkout.workout_type} />
             </Paper>
           )}
         </Stack>
+      )}
+      {selectedTelemetry?.timeseries && selectedTelemetry.timeseries.length > 0 && (
+        <WorkoutChartsModal
+          opened={chartsOpen}
+          onClose={() => setChartsOpen(false)}
+          timeseries={selectedTelemetry.timeseries}
+          workoutType={selectedWorkout?.workout_type}
+          title={selectedWorkout ? `Графики — ${TYPE_LABEL[selectedWorkout.workout_type ?? ''] ?? ''}, ${selectedDate}` : 'Графики'}
+        />
       )}
     </Container>
   )

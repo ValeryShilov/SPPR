@@ -1,9 +1,11 @@
 import {
   Avatar,
+  Badge,
   Box,
   Button,
   Collapse,
   Group,
+  HoverCard,
   Loader,
   ScrollArea,
   Select,
@@ -12,13 +14,14 @@ import {
   Tooltip,
   UnstyledButton,
 } from '@mantine/core'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { analyticsApi } from '../api/analytics'
 import { groupsApi } from '../api/groups'
 import SportIcon from '../components/SportIcon'
 import WorkoutDetailModal, { type IntervalSegment, type WorkoutDetail } from '../components/WorkoutDetailModal'
+import WorkoutFormModal, { type WorkoutFormData } from '../components/WorkoutFormModal'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -128,10 +131,18 @@ function initials(name: string): string {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function WorkoutCard({ w, onClick }: { w: WeekWorkout; onClick: () => void }) {
-  const color  = SPORT_COLOR[w.workout_type ?? 'other'] ?? '#adb5bd'
-  const status = STATUS_META[w.status] ?? STATUS_META.draft
-  const isRest = w.workout_type === 'rest'
+function WorkoutCard({
+  w, today, onClick, onEdit,
+}: {
+  w: WeekWorkout
+  today: string
+  onClick: () => void
+  onEdit: () => void
+}) {
+  const color    = SPORT_COLOR[w.workout_type ?? 'other'] ?? '#adb5bd'
+  const status   = STATUS_META[w.status] ?? STATUS_META.draft
+  const isRest   = w.workout_type === 'rest'
+  const editable = w.status !== 'completed' && w.planned_date >= today
 
   return (
     <Box
@@ -144,14 +155,21 @@ function WorkoutCard({ w, onClick }: { w: WeekWorkout; onClick: () => void }) {
         background: '#fff',
         transition: 'box-shadow 0.15s, transform 0.1s',
         userSelect: 'none',
+        position: 'relative',
       }}
       onMouseEnter={(e) => {
         e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.12)'
         e.currentTarget.style.transform = 'translateY(-1px)'
+        if (editable) {
+          const btn = e.currentTarget.querySelector<HTMLElement>('[data-edit-btn]')
+          if (btn) btn.style.opacity = '1'
+        }
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.boxShadow = 'none'
         e.currentTarget.style.transform = 'none'
+        const btn = e.currentTarget.querySelector<HTMLElement>('[data-edit-btn]')
+        if (btn) btn.style.opacity = '0'
       }}
     >
       {/* Colored top stripe */}
@@ -190,18 +208,66 @@ function WorkoutCard({ w, onClick }: { w: WeekWorkout; onClick: () => void }) {
           <Text size="xs" c="dimmed" style={{ lineHeight: 1 }}>{status.label}</Text>
         </Group>
       </div>
+
+      {/* Edit button — visible on hover for editable workouts */}
+      {editable && (
+        <div
+          data-edit-btn=""
+          onClick={(e) => { e.stopPropagation(); onEdit() }}
+          style={{
+            position: 'absolute', top: 6, right: 6,
+            opacity: 0, transition: 'opacity 0.15s',
+            background: 'rgba(255,255,255,0.92)',
+            border: '1px solid #dee2e6',
+            borderRadius: 4,
+            padding: '2px 5px',
+            fontSize: 12,
+            cursor: 'pointer',
+            lineHeight: 1.4,
+            color: '#495057',
+          }}
+          title="Редактировать"
+        >
+          ✎
+        </div>
+      )}
     </Box>
   )
 }
 
-function EmptyCell() {
+function AddCell({ onClick }: { onClick: () => void }) {
   return (
-    <div style={{
-      border: '1px dashed #dee2e6',
-      borderRadius: 6,
-      height: 96,
-      background: '#fafafa',
-    }} />
+    <div
+      onClick={onClick}
+      style={{
+        border: '1px dashed #dee2e6',
+        borderRadius: 6,
+        minHeight: 96,
+        background: '#fafafa',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        transition: 'background 0.15s, border-color 0.15s',
+        color: '#adb5bd',
+        fontSize: 22,
+        fontWeight: 300,
+        userSelect: 'none',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = '#f1f3f5'
+        e.currentTarget.style.borderColor = '#ced4da'
+        e.currentTarget.style.color = '#495057'
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = '#fafafa'
+        e.currentTarget.style.borderColor = '#dee2e6'
+        e.currentTarget.style.color = '#adb5bd'
+      }}
+      title="Добавить тренировку"
+    >
+      +
+    </div>
   )
 }
 
@@ -330,6 +396,88 @@ function WeeklySummary({ athlete }: { athlete: WeekAthlete }) {
 }
 
 
+// ─── AlertHoverPill ───────────────────────────────────────────────────────────
+
+const SEV_BG: Record<string, string> = {
+  critical: '#fff5f5', warning: '#fff4e6', info: '#e7f5ff',
+}
+
+interface AlertItem {
+  id: string; severity: string; rule_code: string; message: string
+}
+
+function AlertHoverPill({ athlete, onNavigate }: { athlete: WeekAthlete; onNavigate: (p: string) => void }) {
+  const [enabled, setEnabled] = useState(false)
+  const s = ALERT_META[athlete.alert_severity!]
+
+  const { data: alerts = [], isLoading } = useQuery<AlertItem[]>({
+    queryKey: ['alerts', athlete.athlete_id],
+    queryFn: () => analyticsApi.getAlerts(athlete.athlete_id) as Promise<AlertItem[]>,
+    enabled,
+    staleTime: 60_000,
+  })
+
+  return (
+    <HoverCard width={300} shadow="md" openDelay={150} closeDelay={100} withArrow>
+      <HoverCard.Target>
+        <UnstyledButton
+          onClick={() => onNavigate(`/athletes/${athlete.athlete_id}`)}
+          onMouseEnter={(e: React.MouseEvent<HTMLButtonElement>) => {
+            setEnabled(true)
+            e.currentTarget.style.boxShadow = `0 0 0 2px ${s.color}33`
+          }}
+          onMouseLeave={(e: React.MouseEvent<HTMLButtonElement>) => {
+            e.currentTarget.style.boxShadow = 'none'
+          }}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '4px 10px', borderRadius: 20,
+            background: '#fff', border: `1px solid ${s.color}55`,
+          }}
+        >
+          <div style={{ width: 8, height: 8, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
+          <Text size="xs" fw={500}>{athlete.full_name}</Text>
+        </UnstyledButton>
+      </HoverCard.Target>
+
+      <HoverCard.Dropdown p={10}>
+        <Text size="xs" fw={700} c="dimmed" mb={8}>{athlete.full_name}</Text>
+        {isLoading ? (
+          <Text size="xs" c="dimmed">Загрузка...</Text>
+        ) : (
+          <Stack gap={6}>
+            {alerts.map((a) => {
+              const sv = ALERT_META[a.severity] ?? ALERT_META.info
+              return (
+                <Box key={a.id} style={{
+                  padding: '6px 10px',
+                  background: SEV_BG[a.severity] ?? '#f8f9fa',
+                  borderRadius: 6,
+                  borderLeft: `3px solid ${sv.color}`,
+                }}>
+                  <Group gap={6} mb={3} wrap="nowrap">
+                    <Badge size="xs" style={{ background: sv.color, color: '#fff', fontFamily: 'monospace' }}>
+                      {a.rule_code}
+                    </Badge>
+                  </Group>
+                  <Text size="xs" style={{ lineHeight: 1.4 }}>{a.message}</Text>
+                </Box>
+              )
+            })}
+            <Text
+              size="xs" c="dimmed" ta="right"
+              style={{ cursor: 'pointer', textDecoration: 'underline', marginTop: 2 }}
+              onClick={() => onNavigate(`/athletes/${athlete.athlete_id}`)}
+            >
+              Открыть профиль →
+            </Text>
+          </Stack>
+        )}
+      </HoverCard.Dropdown>
+    </HoverCard>
+  )
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function CoachDashboard() {
@@ -338,7 +486,16 @@ export default function CoachDashboard() {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
   const [weekOffset, setWeekOffset]           = useState(0)
   const [expandedRows, setExpandedRows]       = useState<Set<string>>(new Set())
+  const queryClient  = useQueryClient()
   const [modalWorkout, setModalWorkout] = useState<WorkoutDetail | null>(null)
+
+  type FormModal =
+    | { mode: 'create'; athleteId: string; athleteName: string; initialDate: string }
+    | { mode: 'edit';   workout: WorkoutFormData; athleteName: string }
+  const [formModal, setFormModal] = useState<FormModal | null>(null)
+
+  const invalidateWeek = () =>
+    queryClient.invalidateQueries({ queryKey: ['group-week', selectedGroupId, weekStartStr] })
 
   const weekDates   = useMemo(() => getWeekDates(weekOffset), [weekOffset])
   const weekStartStr = isoDate(weekDates[0])
@@ -379,6 +536,18 @@ export default function CoachDashboard() {
   }
 
   const groupOptions = groups.map((g) => ({ value: g.id, label: g.name }))
+
+  const alertAthletes = useMemo(
+    () => athletes
+      .filter((a) => a.alert_severity !== null)
+      .sort((a, b) => {
+        const order: Record<string, number> = { critical: 3, warning: 2, info: 1 }
+        return (order[b.alert_severity!] ?? 0) - (order[a.alert_severity!] ?? 0)
+      }),
+    [athletes],
+  )
+
+  const [alertsCollapsed, setAlertsCollapsed] = useState(false)
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -421,6 +590,48 @@ export default function CoachDashboard() {
           + Новый шаблон
         </Button>
       </Group>
+
+      {/* ── Alert strip ─────────────────────────────────────────────────── */}
+      {alertAthletes.length > 0 && (
+        <Box
+          mb="md"
+          style={{
+            border: '1px solid #ffc9c9',
+            borderLeft: '3px solid #C8102E',
+            borderRadius: 8,
+            padding: '8px 14px',
+            background: '#fff5f5',
+          }}
+        >
+          <Group justify="space-between" mb={alertsCollapsed ? 0 : 8}>
+            <Group gap="xs">
+              <Text size="sm" fw={700} style={{ color: '#C8102E' }}>⚠ Требуют внимания</Text>
+              <Box
+                style={{
+                  background: '#C8102E', color: '#fff', borderRadius: 10,
+                  fontSize: 11, fontWeight: 700, padding: '1px 7px', lineHeight: '18px',
+                }}
+              >
+                {alertAthletes.length}
+              </Box>
+            </Group>
+            <UnstyledButton
+              onClick={() => setAlertsCollapsed((v) => !v)}
+              style={{ fontSize: 12, color: '#868e96', userSelect: 'none' }}
+            >
+              {alertsCollapsed ? 'Развернуть ▼' : 'Свернуть ▲'}
+            </UnstyledButton>
+          </Group>
+
+          <Collapse in={!alertsCollapsed}>
+            <Group gap={6} wrap="wrap">
+              {alertAthletes.map((a) => (
+                <AlertHoverPill key={a.athlete_id} athlete={a} onNavigate={navigate} />
+              ))}
+            </Group>
+          </Collapse>
+        </Box>
+      )}
 
       {/* ── Matrix ──────────────────────────────────────────────────────── */}
       {!selectedGroupId ? (
@@ -551,12 +762,30 @@ export default function CoachDashboard() {
                     {weekDates.map((d) => {
                       const iso = isoDate(d)
                       const w   = byDate.get(iso)
+                      const canAdd = iso >= today
                       return (
                         <div key={iso} style={{ minHeight: 96 }}>
-                          {w
-                            ? <WorkoutCard w={w} onClick={() => openWorkout(w, athlete.full_name)} />
-                            : <EmptyCell />
-                          }
+                          {w ? (
+                            <WorkoutCard
+                              w={w}
+                              today={today}
+                              onClick={() => openWorkout(w, athlete.full_name)}
+                              onEdit={() => setFormModal({
+                                mode: 'edit',
+                                workout: { ...w, actual_distance_km: undefined } as WorkoutFormData,
+                                athleteName: athlete.full_name,
+                              })}
+                            />
+                          ) : canAdd ? (
+                            <AddCell onClick={() => setFormModal({
+                              mode: 'create',
+                              athleteId: athlete.athlete_id,
+                              athleteName: athlete.full_name,
+                              initialDate: iso,
+                            })} />
+                          ) : (
+                            <div style={{ border: '1px dashed #dee2e6', borderRadius: 6, minHeight: 96, background: '#fafafa' }} />
+                          )}
                         </div>
                       )
                     })}
@@ -609,6 +838,15 @@ export default function CoachDashboard() {
         workout={modalWorkout}
         onClose={() => setModalWorkout(null)}
       />
+
+      {/* ── Workout create / edit modal ──────────────────────────────────── */}
+      {formModal && (
+        <WorkoutFormModal
+          {...formModal}
+          onSave={invalidateWeek}
+          onClose={() => setFormModal(null)}
+        />
+      )}
     </Box>
   )
 }

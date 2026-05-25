@@ -17,6 +17,7 @@ import {
   Table,
   Text,
   Textarea,
+  TextInput,
   Title,
   Tooltip,
   UnstyledButton,
@@ -25,9 +26,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { athletesApi } from '../api/athletes'
+import { plansApi } from '../api/plans'
 import AlertsPanel from '../components/AlertsPanel'
 import SportIcon, { SPORT_COLOR, SPORT_LABEL } from '../components/SportIcon'
 import WorkoutDetailModal, { type IntervalSegment, type WorkoutDetail } from '../components/WorkoutDetailModal'
+import WorkoutFormModal, { type WorkoutFormData } from '../components/WorkoutFormModal'
+import { pluralizeAge } from '../utils/pluralize'
 import { ZONE_BADGE_COLOR } from '../utils/zoneColors'
 
 // ─── Типы ────────────────────────────────────────────────────────────────────
@@ -88,6 +92,9 @@ interface AthleteData {
   birth_date: string
   gender: string
   qualification: string | null
+  training_goal_type: string | null
+  target_event_name: string | null
+  target_event_date: string | null
 }
 
 // ─── Вспомогательные компоненты ──────────────────────────────────────────────
@@ -564,8 +571,8 @@ function HistoryBlock({ athleteId }: { athleteId: string }) {
                     </Table.Td>
                     <Table.Td ta="right">{w.planned_duration_min ?? '—'}</Table.Td>
                     <Table.Td ta="right">{w.actual_duration_min ?? '—'}</Table.Td>
-                    <Table.Td ta="right">{w.planned_tss?.toFixed(1) ?? '—'}</Table.Td>
-                    <Table.Td ta="right">{w.actual_tss?.toFixed(1) ?? '—'}</Table.Td>
+                    <Table.Td ta="right">{w.planned_tss != null ? Number(w.planned_tss).toFixed(1) : '—'}</Table.Td>
+                    <Table.Td ta="right">{w.actual_tss != null ? Number(w.actual_tss).toFixed(1) : '—'}</Table.Td>
                     <Table.Td ta="right" fw={pct != null ? 600 : 400}>
                       {pct != null ? `${pct}%` : '—'}
                     </Table.Td>
@@ -583,6 +590,247 @@ function HistoryBlock({ athleteId }: { athleteId: string }) {
           onClose={() => setSelectedWorkout(null)}
         />
       )}
+    </Paper>
+  )
+}
+
+// ─── Предстоящие тренировки ──────────────────────────────────────────────────
+
+interface UpcomingWorkout {
+  id: string
+  planned_date: string
+  workout_type: string | null
+  workout_subtype: string | null
+  target_zone: string | null
+  planned_duration_min: number | null
+  planned_tss: number | null
+  description: string | null
+  interval_structure: IntervalSegment[] | null
+  status: string
+}
+
+function UpcomingBlock({ athleteId, athleteName }: { athleteId: string; athleteName: string }) {
+  const queryClient = useQueryClient()
+
+  const [formModal, setFormModal] = useState<
+    | { mode: 'create' }
+    | { mode: 'edit'; workout: WorkoutFormData }
+    | null
+  >(null)
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+
+  const { data: upcoming = [], isLoading } = useQuery<UpcomingWorkout[]>({
+    queryKey: ['upcoming', athleteId],
+    queryFn: () => athletesApi.getUpcoming(athleteId),
+  })
+
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['upcoming', athleteId] })
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => plansApi.deleteWorkout(id),
+    onSuccess: () => { setConfirmDelete(null); invalidate() },
+  })
+
+  const STATUS_DOT: Record<string, string> = {
+    published: '#228be6', draft: '#adb5bd',
+  }
+
+  return (
+    <Paper p="md" withBorder radius="md" mb="lg">
+      <Group justify="space-between" mb="sm">
+        <Title order={4}>Предстоящие тренировки</Title>
+        <Button
+          size="xs"
+          variant="light"
+          onClick={() => setFormModal({ mode: 'create' })}
+        >
+          + Добавить
+        </Button>
+      </Group>
+
+      {isLoading && <Loader size="sm" />}
+
+      {!isLoading && upcoming.length === 0 && (
+        <Text size="sm" c="dimmed">Запланированных тренировок нет</Text>
+      )}
+
+      {upcoming.length > 0 && (
+        <ScrollArea>
+          <Table withTableBorder withColumnBorders fz="sm" highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Дата</Table.Th>
+                <Table.Th>Тип</Table.Th>
+                <Table.Th>Зона</Table.Th>
+                <Table.Th ta="right">Длит., мин</Table.Th>
+                <Table.Th ta="right">TSS</Table.Th>
+                <Table.Th>Статус</Table.Th>
+                <Table.Th w={96} />
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {upcoming.map((w) => {
+                const stype = w.workout_type ?? 'other'
+                const isConfirm = confirmDelete === w.id
+                return (
+                  <Table.Tr key={w.id}>
+                    <Table.Td>
+                      {new Date(w.planned_date + 'T00:00:00').toLocaleDateString('ru-RU', {
+                        weekday: 'short', day: 'numeric', month: 'short',
+                      })}
+                    </Table.Td>
+                    <Table.Td>
+                      <Group gap={6} wrap="nowrap">
+                        <SportIcon type={stype} size={16} color={SPORT_COLOR[stype]} />
+                        <Text size="xs">{SPORT_LABEL[stype] ?? stype}</Text>
+                        {w.interval_structure && w.interval_structure.length > 0 && (
+                          <Badge size="xs" color="orange" variant="light">Инт.</Badge>
+                        )}
+                      </Group>
+                    </Table.Td>
+                    <Table.Td>
+                      {w.target_zone
+                        ? <Badge color={ZONE_BADGE_COLOR[w.target_zone] ?? 'gray'} size="xs" variant="light">{w.target_zone}</Badge>
+                        : '—'}
+                    </Table.Td>
+                    <Table.Td ta="right">{w.planned_duration_min ?? '—'}</Table.Td>
+                    <Table.Td ta="right">{w.planned_tss != null ? Number(w.planned_tss).toFixed(1) : '—'}</Table.Td>
+                    <Table.Td>
+                      <Group gap={5} wrap="nowrap">
+                        <div style={{ width: 7, height: 7, borderRadius: '50%', background: STATUS_DOT[w.status] ?? '#adb5bd', flexShrink: 0 }} />
+                        <Text size="xs" c="dimmed">{w.status === 'published' ? 'Опубликовано' : 'Черновик'}</Text>
+                      </Group>
+                    </Table.Td>
+                    <Table.Td>
+                      {isConfirm ? (
+                        <Group gap={4} wrap="nowrap">
+                          <Text size="xs" c="dimmed">Удалить?</Text>
+                          <ActionIcon
+                            size="xs" color="red" variant="filled"
+                            loading={deleteMut.isPending}
+                            onClick={() => deleteMut.mutate(w.id)}
+                          >✓</ActionIcon>
+                          <ActionIcon
+                            size="xs" variant="subtle" color="gray"
+                            onClick={() => setConfirmDelete(null)}
+                          >✕</ActionIcon>
+                        </Group>
+                      ) : (
+                        <Group gap={4} wrap="nowrap">
+                          <Tooltip label="Редактировать" withArrow>
+                            <ActionIcon
+                              size="xs" variant="subtle" color="blue"
+                              onClick={() => setFormModal({ mode: 'edit', workout: w })}
+                            >✎</ActionIcon>
+                          </Tooltip>
+                          <Tooltip label="Удалить" withArrow>
+                            <ActionIcon
+                              size="xs" variant="subtle" color="red"
+                              onClick={() => setConfirmDelete(w.id)}
+                            >✕</ActionIcon>
+                          </Tooltip>
+                        </Group>
+                      )}
+                    </Table.Td>
+                  </Table.Tr>
+                )
+              })}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea>
+      )}
+
+      {formModal && (
+        <WorkoutFormModal
+          mode={formModal.mode}
+          athleteId={formModal.mode === 'create' ? athleteId : undefined}
+          athleteName={athleteName}
+          workout={formModal.mode === 'edit' ? formModal.workout : undefined}
+          onSave={invalidate}
+          onClose={() => setFormModal(null)}
+        />
+      )}
+    </Paper>
+  )
+}
+
+// ─── Цель подготовки (тренерский вид) ────────────────────────────────────────
+
+const GOAL_OPTIONS = [
+  { value: 'health',        label: 'Оздоровление' },
+  { value: 'fitness',       label: 'Поддержание формы' },
+  { value: 'performance',   label: 'Рост результата' },
+  { value: 'competition',   label: 'Соревновательный сезон' },
+  { value: 'target_event',  label: 'Подготовка к старту' },
+  { value: 'qualification', label: 'Выполнение разряда' },
+]
+
+function GoalBlock({ athlete }: { athlete: AthleteData }) {
+  const queryClient = useQueryClient()
+  const [goalType,  setGoalType]  = useState<string | null>(athlete.training_goal_type)
+  const [eventName, setEventName] = useState(athlete.target_event_name ?? '')
+  const [eventDate, setEventDate] = useState(athlete.target_event_date ?? '')
+  const [saved,     setSaved]     = useState(false)
+
+  const changed =
+    goalType  !== athlete.training_goal_type ||
+    eventName !== (athlete.target_event_name ?? '') ||
+    eventDate !== (athlete.target_event_date ?? '')
+
+  const save = useMutation({
+    mutationFn: () => athletesApi.update(athlete.id, {
+      training_goal_type: goalType,
+      target_event_name:  goalType === 'target_event' ? (eventName || null) : null,
+      target_event_date:  goalType === 'target_event' ? (eventDate || null) : null,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['athlete', athlete.id] })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2500)
+    },
+  })
+
+  return (
+    <Paper p="md" withBorder radius="md" mb="lg">
+      <Title order={5} mb="sm">Цель подготовки</Title>
+      <Group align="flex-end" gap="sm" wrap="wrap">
+        <Select
+          placeholder="Выберите цель..."
+          data={GOAL_OPTIONS}
+          value={goalType}
+          onChange={v => { setGoalType(v); setSaved(false) }}
+          clearable
+          style={{ minWidth: 240 }}
+        />
+        {goalType === 'target_event' && (
+          <>
+            <TextInput
+              label="Название соревнования"
+              placeholder="Чемпионат России"
+              value={eventName}
+              onChange={e => { setEventName(e.target.value); setSaved(false) }}
+              style={{ minWidth: 220 }}
+            />
+            <TextInput
+              label="Дата"
+              type="date"
+              value={eventDate}
+              onChange={e => { setEventDate(e.target.value); setSaved(false) }}
+            />
+          </>
+        )}
+        <Button
+          size="sm"
+          loading={save.isPending}
+          disabled={!changed}
+          onClick={() => save.mutate()}
+          style={{ alignSelf: 'flex-end' }}
+        >
+          Сохранить
+        </Button>
+        {saved && <Text size="sm" c="green" style={{ alignSelf: 'flex-end' }}>Сохранено</Text>}
+        {save.isError && <Text size="sm" c="red" style={{ alignSelf: 'flex-end' }}>Ошибка</Text>}
+      </Group>
     </Paper>
   )
 }
@@ -616,7 +864,7 @@ export default function AthleteProfile() {
           <Stack gap={2}>
             <Title order={2}>{athlete.last_name} {athlete.first_name}</Title>
             <Group gap="xs">
-              <Text size="sm" c="dimmed">{age} лет · {athlete.gender === 'm' ? 'муж.' : 'жен.'}</Text>
+              <Text size="sm" c="dimmed">{age} {pluralizeAge(age)} · {athlete.gender === 'm' ? 'муж.' : 'жен.'}</Text>
               {athlete.qualification && (
                 <Badge color="blue" variant="light">
                   {QUAL_LABELS[athlete.qualification] ?? athlete.qualification}
@@ -626,6 +874,14 @@ export default function AthleteProfile() {
           </Stack>
         </Group>
       </Paper>
+
+      {/* Цель подготовки */}
+      <GoalBlock athlete={athlete} />
+
+      {/* Активные алерты */}
+      <Box mb="lg">
+        <AlertsPanel athleteId={id} />
+      </Box>
 
       {/* Маркеры + Зоны — две колонки */}
       <Grid mb="lg" gutter="md">
@@ -637,10 +893,8 @@ export default function AthleteProfile() {
         </Grid.Col>
       </Grid>
 
-      {/* Активные алерты */}
-      <Paper p="md" withBorder radius="md" mb="lg">
-        <AlertsPanel athleteId={id} />
-      </Paper>
+      {/* Предстоящие тренировки */}
+      <UpcomingBlock athleteId={id} athleteName={`${athlete.first_name} ${athlete.last_name}`} />
 
       {/* История тренировок */}
       <HistoryBlock athleteId={id} />

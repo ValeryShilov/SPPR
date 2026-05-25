@@ -1,4 +1,5 @@
 import uuid
+from datetime import date
 
 from pydantic import BaseModel, EmailStr
 
@@ -38,3 +39,14 @@ class UpdateProfileRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
+
+
+class CreateAthleteRequest(BaseModel):
+    email: EmailStr
+    password: str
+    full_name: str | None = None
+    first_name: str
+    last_name: str
+    birth_date: date
+    gender: str
+    qualification: str | None = None

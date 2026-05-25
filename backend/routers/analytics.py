@@ -435,37 +435,28 @@ async def get_coach_athletes(
         select(TrainingGroup).where(TrainingGroup.coach_user_id == current_user.id)
     )
     groups = groups_result.scalars().all()
-    if not groups:
-        return []
-
     group_ids = [g.id for g in groups]
     group_by_id = {g.id: g for g in groups}
 
-    # Все активные участники с привязкой к группам
-    memberships_result = await db.execute(
-        select(GroupMembership)
-        .where(GroupMembership.group_id.in_(group_ids), GroupMembership.is_active.is_(True))
-    )
-    memberships = memberships_result.scalars().all()
-
-    athlete_ids_set: set[uuid.UUID] = {m.athlete_id for m in memberships}
-    if not athlete_ids_set:
-        return []
-    athlete_ids = list(athlete_ids_set)
-
-    # Группы каждого атлета
+    # Активные участники групп этого тренера
     athlete_groups: dict[uuid.UUID, list[CoachAthleteGroup]] = defaultdict(list)
-    for m in memberships:
-        g = group_by_id[m.group_id]
-        athlete_groups[m.athlete_id].append(CoachAthleteGroup(id=g.id, name=g.name))
+    if group_ids:
+        memberships_result = await db.execute(
+            select(GroupMembership)
+            .where(GroupMembership.group_id.in_(group_ids), GroupMembership.is_active.is_(True))
+        )
+        for m in memberships_result.scalars().all():
+            g = group_by_id[m.group_id]
+            athlete_groups[m.athlete_id].append(CoachAthleteGroup(id=g.id, name=g.name))
 
-    # Профили атлетов
+    # Все профили атлетов
     profiles_result = await db.execute(
-        select(AthleteProfile)
-        .where(AthleteProfile.id.in_(athlete_ids))
-        .order_by(AthleteProfile.last_name, AthleteProfile.first_name)
+        select(AthleteProfile).order_by(AthleteProfile.last_name, AthleteProfile.first_name)
     )
     profiles = profiles_result.scalars().all()
+    if not profiles:
+        return []
+    athlete_ids = [p.id for p in profiles]
 
     # Последние показатели нагрузки
     latest_date_subq = (
@@ -547,6 +538,7 @@ async def get_coach_athletes(
             groups=sorted(athlete_groups.get(p.id, []), key=lambda g: g.name),
             tsb=float(load_map[p.id][0]) if p.id in load_map else None,
             atl=float(load_map[p.id][1]) if p.id in load_map else None,
+            coach_user_id=p.coach_user_id,
             ctl=float(load_map[p.id][2]) if p.id in load_map else None,
             active_alerts=alert_count_map[p.id],
             alert_severity=alert_sev_map.get(p.id),
