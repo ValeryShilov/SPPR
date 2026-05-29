@@ -130,7 +130,7 @@ async def create_self_workout(
         athlete_id=athlete.id,
         planned_date=data.planned_date,
         workout_type=data.workout_type,
-        workout_subtype=None,
+        workout_subtype=data.workout_subtype,
         target_zone=None,
         planned_duration_min=None,
         planned_tss=None,
@@ -189,6 +189,32 @@ async def create_workout(
     await db.commit()
     await db.refresh(workout)
     return workout
+
+
+@router.delete("/self/{workout_id}", status_code=status.HTTP_200_OK)
+async def delete_self_workout(
+    workout_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Атлет удаляет собственную тренировку вне плана (template_id is None)."""
+    result = await db.execute(
+        select(AthleteProfile).where(AthleteProfile.user_id == current_user.id)
+    )
+    athlete = result.scalar_one_or_none()
+    if athlete is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Профиль атлета не найден")
+
+    workout = await db.get(IndividualWorkout, workout_id)
+    if workout is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Тренировка не найдена")
+
+    if workout.athlete_id != athlete.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
+
+    await db.delete(workout)
+    await db.commit()
+    return {"detail": "ok"}
 
 
 @router.delete("/{workout_id}", status_code=status.HTTP_200_OK)

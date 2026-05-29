@@ -25,6 +25,7 @@ from backend.models.group import GroupMembership
 from backend.models.plan import IndividualWorkout
 from backend.services.analytics import (
     _AlertContext,
+    _Thresholds,
     _check_h1,
     _check_h2,
     _check_h3,
@@ -106,6 +107,7 @@ def make_ctx(**kwargs) -> _AlertContext:
         "tel7": [],
         "tel28": [],
         "hrv_base_marker": None,
+        "thresholds": _Thresholds(),
     }
     defaults.update(kwargs)
     return _AlertContext(**defaults)

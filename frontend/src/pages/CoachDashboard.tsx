@@ -132,12 +132,13 @@ function initials(name: string): string {
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function WorkoutCard({
-  w, today, onClick, onEdit,
+  w, today, onClick, onEdit, compact = false,
 }: {
   w: WeekWorkout
   today: string
   onClick: () => void
   onEdit: () => void
+  compact?: boolean
 }) {
   const color    = SPORT_COLOR[w.workout_type ?? 'other'] ?? '#adb5bd'
   const status   = STATUS_META[w.status] ?? STATUS_META.draft
@@ -173,16 +174,17 @@ function WorkoutCard({
       }}
     >
       {/* Colored top stripe */}
-      <div style={{ height: 3, background: color }} />
+      <div style={{ height: compact ? 2 : 3, background: color }} />
 
-      <div style={{ padding: '7px 10px 8px' }}>
-        {isRest ? (
-          <Text size="sm" c="dimmed">Отдых</Text>
-        ) : (
-          <>
-            <Group gap={5} wrap="nowrap" align="center" mb={4}>
-              <SportIcon type={w.workout_type ?? 'other'} size={18} color={color} />
-              <Text size="sm" fw={700} style={{ color, lineHeight: 1, whiteSpace: 'nowrap' }}>
+      {compact ? (
+        /* ── Компактный вид: одна строка ── */
+        <div style={{ padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 5 }}>
+          <SportIcon type={w.workout_type ?? 'other'} size={13} color={color} />
+          {isRest ? (
+            <Text size="xs" c="dimmed" style={{ lineHeight: 1 }}>Отдых</Text>
+          ) : (
+            <>
+              <Text size="xs" fw={700} style={{ color, lineHeight: 1, whiteSpace: 'nowrap' }}>
                 {w.target_zone ?? '—'}
               </Text>
               {w.planned_duration_min != null && (
@@ -190,27 +192,47 @@ function WorkoutCard({
                   {w.planned_duration_min}м
                 </Text>
               )}
-            </Group>
-            {w.planned_tss != null && (
-              <Text size="xs" c="dimmed" style={{ lineHeight: 1.3 }}>
-                TSS {Number(w.planned_tss).toFixed(0)}
-              </Text>
-            )}
-            {w.interval_structure && w.interval_structure.length > 0 && (
-              <Text size="xs" c="orange" fw={600} style={{ lineHeight: 1.3 }}>Интервал</Text>
-            )}
-          </>
-        )}
-
-        {/* Status dot */}
-        <Group gap={4} mt={5} wrap="nowrap" align="center">
-          <div style={{ width: 7, height: 7, borderRadius: '50%', background: status.dot, flexShrink: 0 }} />
-          <Text size="xs" c="dimmed" style={{ lineHeight: 1 }}>{status.label}</Text>
-        </Group>
-      </div>
+              <div style={{ marginLeft: 'auto', width: 6, height: 6, borderRadius: '50%', background: status.dot, flexShrink: 0 }} />
+            </>
+          )}
+        </div>
+      ) : (
+        /* ── Полный вид ── */
+        <div style={{ padding: '7px 10px 8px' }}>
+          {isRest ? (
+            <Text size="sm" c="dimmed">Отдых</Text>
+          ) : (
+            <>
+              <Group gap={5} wrap="nowrap" align="center" mb={4}>
+                <SportIcon type={w.workout_type ?? 'other'} size={18} color={color} />
+                <Text size="sm" fw={700} style={{ color, lineHeight: 1, whiteSpace: 'nowrap' }}>
+                  {w.target_zone ?? '—'}
+                </Text>
+                {w.planned_duration_min != null && (
+                  <Text size="xs" c="dimmed" style={{ lineHeight: 1, whiteSpace: 'nowrap' }}>
+                    {w.planned_duration_min}м
+                  </Text>
+                )}
+              </Group>
+              {w.planned_tss != null && (
+                <Text size="xs" c="dimmed" style={{ lineHeight: 1.3 }}>
+                  TSS {Number(w.planned_tss).toFixed(0)}
+                </Text>
+              )}
+              {w.interval_structure && w.interval_structure.length > 0 && (
+                <Text size="xs" c="orange" fw={600} style={{ lineHeight: 1.3 }}>Интервал</Text>
+              )}
+            </>
+          )}
+          <Group gap={4} mt={5} wrap="nowrap" align="center">
+            <div style={{ width: 7, height: 7, borderRadius: '50%', background: status.dot, flexShrink: 0 }} />
+            <Text size="xs" c="dimmed" style={{ lineHeight: 1 }}>{status.label}</Text>
+          </Group>
+        </div>
+      )}
 
       {/* Edit button — visible on hover for editable workouts */}
-      {editable && (
+      {editable && !compact && (
         <div
           data-edit-btn=""
           onClick={(e) => { e.stopPropagation(); onEdit() }}
@@ -265,6 +287,40 @@ function AddCell({ onClick }: { onClick: () => void }) {
         e.currentTarget.style.color = '#adb5bd'
       }}
       title="Добавить тренировку"
+    >
+      +
+    </div>
+  )
+}
+
+function AddMore({ onClick }: { onClick: () => void }) {
+  return (
+    <div
+      onClick={onClick}
+      title="Добавить ещё тренировку"
+      style={{
+        border: '1px dashed #dee2e6',
+        borderRadius: 6,
+        padding: '3px 0',
+        background: '#fafafa',
+        cursor: 'pointer',
+        textAlign: 'center',
+        color: '#adb5bd',
+        fontSize: 16,
+        lineHeight: 1.4,
+        transition: 'background 0.15s, border-color 0.15s, color 0.15s',
+        userSelect: 'none',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = '#f1f3f5'
+        e.currentTarget.style.borderColor = '#ced4da'
+        e.currentTarget.style.color = '#495057'
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = '#fafafa'
+        e.currentTarget.style.borderColor = '#dee2e6'
+        e.currentTarget.style.color = '#adb5bd'
+      }}
     >
       +
     </div>
@@ -488,6 +544,7 @@ export default function CoachDashboard() {
   const [expandedRows, setExpandedRows]       = useState<Set<string>>(new Set())
   const queryClient  = useQueryClient()
   const [modalWorkout, setModalWorkout] = useState<WorkoutDetail | null>(null)
+  const [modalOnEdit, setModalOnEdit]   = useState<(() => void) | null>(null)
 
   type FormModal =
     | { mode: 'create'; athleteId: string; athleteName: string; initialDate: string }
@@ -528,11 +585,12 @@ export default function CoachDashboard() {
     })
 
   const openWorkout = (w: WeekWorkout, name: string) => {
-    setModalWorkout({
-      ...w,
-      actual_distance_km: w.distance_km,
-      athlete_name: name,
-    })
+    setModalWorkout({ ...w, actual_distance_km: w.distance_km, athlete_name: name })
+    setModalOnEdit(() => () => setFormModal({
+      mode: 'edit',
+      workout: { ...w, actual_distance_km: undefined } as WorkoutFormData,
+      athleteName: name,
+    }))
   }
 
   const groupOptions = groups.map((g) => ({ value: g.id, label: g.name }))
@@ -679,8 +737,12 @@ export default function CoachDashboard() {
             )}
 
             {athletes.map((athlete) => {
-              const byDate = new Map<string, WeekWorkout>()
-              for (const w of athlete.workouts) byDate.set(w.planned_date, w)
+              const byDate = new Map<string, WeekWorkout[]>()
+              for (const w of athlete.workouts) {
+                const arr = byDate.get(w.planned_date) ?? []
+                arr.push(w)
+                byDate.set(w.planned_date, arr)
+              }
 
               const expanded = expandedRows.has(athlete.athlete_id)
               const alert    = athlete.alert_severity ? ALERT_META[athlete.alert_severity] : null
@@ -760,15 +822,23 @@ export default function CoachDashboard() {
 
                     {/* Day cells */}
                     {weekDates.map((d) => {
-                      const iso = isoDate(d)
-                      const w   = byDate.get(iso)
-                      const canAdd = iso >= today
+                      const iso      = isoDate(d)
+                      const workouts = byDate.get(iso) ?? []
+                      const canAdd   = iso >= today
+                      const addArgs  = {
+                        mode: 'create' as const,
+                        athleteId: athlete.athlete_id,
+                        athleteName: athlete.full_name,
+                        initialDate: iso,
+                      }
                       return (
-                        <div key={iso} style={{ minHeight: 96 }}>
-                          {w ? (
+                        <div key={iso} style={{ minHeight: 96, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                          {workouts.map((w) => (
                             <WorkoutCard
+                              key={w.id}
                               w={w}
                               today={today}
+                              compact={workouts.length > 1}
                               onClick={() => openWorkout(w, athlete.full_name)}
                               onEdit={() => setFormModal({
                                 mode: 'edit',
@@ -776,15 +846,15 @@ export default function CoachDashboard() {
                                 athleteName: athlete.full_name,
                               })}
                             />
-                          ) : canAdd ? (
-                            <AddCell onClick={() => setFormModal({
-                              mode: 'create',
-                              athleteId: athlete.athlete_id,
-                              athleteName: athlete.full_name,
-                              initialDate: iso,
-                            })} />
-                          ) : (
+                          ))}
+                          {workouts.length === 0 && canAdd && (
+                            <AddCell onClick={() => setFormModal(addArgs)} />
+                          )}
+                          {workouts.length === 0 && !canAdd && (
                             <div style={{ border: '1px dashed #dee2e6', borderRadius: 6, minHeight: 96, background: '#fafafa' }} />
+                          )}
+                          {workouts.length > 0 && canAdd && (
+                            <AddMore onClick={() => setFormModal(addArgs)} />
                           )}
                         </div>
                       )
@@ -836,7 +906,8 @@ export default function CoachDashboard() {
       {/* ── Workout detail modal ─────────────────────────────────────────── */}
       <WorkoutDetailModal
         workout={modalWorkout}
-        onClose={() => setModalWorkout(null)}
+        onClose={() => { setModalWorkout(null); setModalOnEdit(null) }}
+        onEdit={modalOnEdit ?? undefined}
       />
 
       {/* ── Workout create / edit modal ──────────────────────────────────── */}

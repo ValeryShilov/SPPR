@@ -57,15 +57,9 @@ async def get_my_plan(
             IndividualWorkout.status.in_(["published", "completed"]),
             IndividualWorkout.planned_date >= date.today(),
         )
-        .order_by(IndividualWorkout.planned_date, IndividualWorkout.updated_at.desc())
+        .order_by(IndividualWorkout.planned_date, IndividualWorkout.created_at)
     )
-    workouts = result.scalars().all()
-    # Защита от дублей: на каждую дату оставляем самую свежую запись
-    seen: dict[date, IndividualWorkout] = {}
-    for w in workouts:
-        if w.planned_date not in seen:
-            seen[w.planned_date] = w
-    return list(seen.values())
+    return result.scalars().all()
 
 
 @router.post("/telemetry/upload", response_model=TelemetryUploadResponse, status_code=202)

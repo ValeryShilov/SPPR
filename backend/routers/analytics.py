@@ -586,17 +586,8 @@ async def get_group_week(
     )
     workouts = workouts_result.scalars().all()
 
-    # Один лучший workout на (athlete, date): completed > published > draft
-    _STATUS_PRIORITY = {"completed": 3, "published": 2, "draft": 1}
-    best_by_key: dict[tuple[uuid.UUID, date], IndividualWorkout] = {}
-    for w in workouts:
-        key = (w.athlete_id, w.planned_date)
-        existing = best_by_key.get(key)
-        if existing is None or _STATUS_PRIORITY.get(w.status, 0) > _STATUS_PRIORITY.get(existing.status, 0):
-            best_by_key[key] = w
-
     workouts_by_athlete: dict[uuid.UUID, list[IndividualWorkout]] = defaultdict(list)
-    for w in best_by_key.values():
+    for w in workouts:
         workouts_by_athlete[w.athlete_id].append(w)
 
     # Фактическая телеметрия

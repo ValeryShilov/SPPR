@@ -5,6 +5,7 @@ import {
   Checkbox,
   Collapse,
   Container,
+  Divider,
   Group,
   NumberInput,
   Paper,
@@ -22,6 +23,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import PlanCalendar, { isoDate } from '../components/PlanCalendar'
 import SportIcon from '../components/SportIcon'
 import IntervalBuilderComponent, { type Segment } from '../components/IntervalBuilder'
+import { groupsApi } from '../api/groups'
 import { plansApi } from '../api/plans'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -86,73 +88,92 @@ interface DayConfig {
 
 interface Template {
   id: string
+  group_id: string
   name: string
   start_date: string
   duration_days: number
   description: string | null
-  week_schedule: Record<string, unknown>[] | null
+  week_schedule: unknown[] | null
 }
+
+interface TrainingGroup { id: string; name: string }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const makeEmptySchedule = (n: number): DayConfig[] =>
-  Array.from({ length: n }, (): DayConfig => ({
-    workout_type: 'rest', workout_subtype: null, zone: 'Z1',
-    duration_min: 0, description: '', is_interval: false, segments: [],
-  }))
+const emptyDayWorkout = (): DayConfig => ({
+  workout_type: 'rest', workout_subtype: null, zone: 'Z1',
+  duration_min: 0, description: '', is_interval: false, segments: [],
+})
 
-function fromBackend(saved: Record<string, unknown>[]): DayConfig[] {
-  return saved.map((d) => {
-    const segs = ((d.interval_structure as Record<string, unknown>[] | null) ?? []).map((s) => ({
-      duration_min: null,
-      distance_km:  null,
-      ...(s as object),
-      _id: crypto.randomUUID(),
-    })) as Segment[]
-    return {
-      workout_type:    (d.workout_type as string)    ?? 'run',
-      workout_subtype: (d.workout_subtype as string | null) ?? null,
-      zone:            (d.zone as string)            ?? 'Z2',
-      duration_min:    (d.duration_min as number)    ?? 60,
-      description:     (d.description as string)     ?? '',
-      is_interval:     segs.length > 0,
-      segments:        segs,
+const emptyDay = (): DayConfig[] => [emptyDayWorkout()]
+
+const makeEmptySchedule = (n: number): DayConfig[][] =>
+  Array.from({ length: n }, emptyDay)
+
+function parseSingleWorkout(d: Record<string, unknown>): DayConfig {
+  const segs = ((d.interval_structure as Record<string, unknown>[] | null) ?? []).map((s) => ({
+    duration_min: null,
+    distance_km:  null,
+    ...(s as object),
+    _id: crypto.randomUUID(),
+  })) as Segment[]
+  return {
+    workout_type:    (d.workout_type as string)         ?? 'run',
+    workout_subtype: (d.workout_subtype as string|null) ?? null,
+    zone:            (d.zone as string)                 ?? 'Z2',
+    duration_min:    (d.duration_min as number)         ?? 60,
+    description:     (d.description as string)          ?? '',
+    is_interval:     segs.length > 0,
+    segments:        segs,
+  }
+}
+
+function fromBackend(saved: unknown[]): DayConfig[][] {
+  return saved.map((entry) => {
+    if (Array.isArray(entry)) {
+      return (entry as Record<string, unknown>[]).map(parseSingleWorkout)
     }
+    return [parseSingleWorkout(entry as Record<string, unknown>)]
   })
 }
 
-function toBackend(schedule: DayConfig[]) {
-  return schedule.map((d) => {
-    const isInterval = d.is_interval && d.segments.length > 0
-    const dur = isInterval
-      ? d.segments.reduce((s, seg) =>
-          seg.duration_min != null ? s + seg.duration_min * seg.repeats : s, 0)
-      : d.duration_min
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const stripId = ({ _id, ...rest }: Segment) => rest
-    return {
-      workout_type:       d.workout_type,
-      workout_subtype:    d.workout_subtype ?? null,
-      zone:               d.zone,
-      duration_min:       dur,
-      description:        d.description || null,
-      interval_structure: isInterval ? d.segments.map(stripId) : null,
-    }
-  })
+function toBackend(schedule: DayConfig[][]): unknown[][] {
+  return schedule.map((dayWorkouts) =>
+    dayWorkouts.map((d) => {
+      const isInterval = d.is_interval && d.segments.length > 0
+      const dur = isInterval
+        ? d.segments.reduce((s, seg) =>
+            seg.duration_min != null ? s + seg.duration_min * seg.repeats : s, 0)
+        : d.duration_min
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const stripId = ({ _id, ...rest }: Segment) => rest
+      return {
+        workout_type:       d.workout_type,
+        workout_subtype:    d.workout_subtype ?? null,
+        zone:               d.zone,
+        duration_min:       dur,
+        description:        d.description || null,
+        interval_structure: isInterval ? d.segments.map(stripId) : null,
+      }
+    })
+  )
 }
 
 // ─── DayCard ─────────────────────────────────────────────────────────────────
 
-function DayCard({ idx, day, onChange, label }: {
-  idx: number
+function DayCard({ dayIdx, workoutIdx, day, onChange, onRemove, canRemove, label }: {
+  dayIdx: number
+  workoutIdx: number
   day: DayConfig
-  onChange: (idx: number, patch: Partial<DayConfig>) => void
+  onChange: (dayIdx: number, workoutIdx: number, patch: Partial<DayConfig>) => void
+  onRemove?: () => void
+  canRemove?: boolean
   label: string
 }) {
-  const isCyclic  = CYCLIC_TYPES.has(day.workout_type)
-  const isRest    = day.workout_type === 'rest'
+  const isCyclic   = CYCLIC_TYPES.has(day.workout_type)
+  const isRest     = day.workout_type === 'rest'
   const hasSubtype = day.workout_type === 'ski' || day.workout_type === 'skiroll'
-  const set = (patch: Partial<DayConfig>) => onChange(idx, patch)
+  const set = (patch: Partial<DayConfig>) => onChange(dayIdx, workoutIdx, patch)
 
   const handleTypeChange = (v: string | null) => {
     const t = v ?? 'rest'
@@ -207,6 +228,14 @@ function DayCard({ idx, day, onChange, label }: {
                 onChange={(e) => set({ is_interval: e.currentTarget.checked })} size="xs" />
             </Box>
           )}
+
+          {canRemove && onRemove && (
+            <Box pt={20} ml="auto">
+              <Button size="xs" variant="subtle" color="red" onClick={onRemove}>
+                Удалить
+              </Button>
+            </Box>
+          )}
         </Group>
 
         {/* Row 2: description */}
@@ -243,11 +272,17 @@ export default function TemplateEditor() {
     enabled: !!templateId,
   })
 
+  const { data: groups = [] } = useQuery<TrainingGroup[]>({
+    queryKey: ['groups'],
+    queryFn: groupsApi.list,
+  })
+
+  const [groupId, setGroupId]       = useState('')
   const [name, setName]             = useState('')
   const [startDate, setStartDate]   = useState('')
   const [durationDays, setDurationDays] = useState<number | string>(7)
   const [descr, setDescr]           = useState('')
-  const [schedule, setSchedule]     = useState<DayConfig[]>([])
+  const [schedule, setSchedule]     = useState<DayConfig[][]>([])
 
   const [showCalendar, setShowCalendar] = useState(true)
   const [calView, setCalView]           = useState<'month' | 'week'>('month')
@@ -256,9 +291,10 @@ export default function TemplateEditor() {
 
   useEffect(() => {
     if (template) {
+      setGroupId(template.group_id)
       setName(template.name)
       setStartDate(template.start_date)
-      setDurationDays(template.duration_days)
+      setDurationDays(template.duration_days === 0 ? '' : template.duration_days)
       setDescr(template.description ?? '')
       const n = template.duration_days
       setSchedule(template.week_schedule ? fromBackend(template.week_schedule) : makeEmptySchedule(n))
@@ -298,24 +334,37 @@ export default function TemplateEditor() {
   const renderTemplateDay = (date: Date) => {
     const idx = getScheduleIdx(date)
     if (idx < 0 || idx >= schedule.length) return null
-    const day = schedule[idx]
-    if (day.workout_type === 'rest') {
-      return (
-        <Box mt={2}>
-          <SportIcon type="rest" size={26} color="#868e96" />
-          <Text size="xs" c="dimmed" style={{ lineHeight: 1.2 }}>Отдых</Text>
-        </Box>
-      )
-    }
+    const dayWorkouts = schedule[idx]
+    const compact = dayWorkouts.length > 1
     return (
       <Box mt={2}>
-        <SportIcon type={day.workout_type} size={26} color="#343a40" />
-        <Text size="xs" c="dimmed" style={{ lineHeight: 1.2 }}>
-          {day.zone} · {day.duration_min}м
-        </Text>
-        {day.is_interval && day.segments.length > 0 && (
-          <Text size="xs" c="blue" style={{ fontSize: 10 }}>интервал</Text>
-        )}
+        {dayWorkouts.map((day, wi) => {
+          if (day.workout_type === 'rest') {
+            return (
+              <Box key={wi} mt={wi > 0 ? 1 : 0}>
+                <SportIcon type="rest" size={compact ? 20 : 26} color="#868e96" />
+                {!compact && <Text size="xs" c="dimmed" style={{ lineHeight: 1.2 }}>Отдых</Text>}
+              </Box>
+            )
+          }
+          return (
+            <Box key={wi} mt={wi > 0 ? 1 : 0}>
+              <SportIcon type={day.workout_type} size={compact ? 20 : 26} color="#343a40" />
+              {compact ? (
+                <Text size="xs" c="dimmed" style={{ fontSize: 9, lineHeight: 1.2 }}>{day.zone}</Text>
+              ) : (
+                <>
+                  <Text size="xs" c="dimmed" style={{ lineHeight: 1.2 }}>
+                    {day.zone} · {day.duration_min}м
+                  </Text>
+                  {day.is_interval && day.segments.length > 0 && (
+                    <Text size="xs" c="blue" style={{ fontSize: 10 }}>интервал</Text>
+                  )}
+                </>
+              )}
+            </Box>
+          )
+        })}
       </Box>
     )
   }
@@ -344,20 +393,35 @@ export default function TemplateEditor() {
     setSchedule((prev) => {
       if (n === prev.length) return prev
       if (n < prev.length) return prev.slice(0, n)
-      return [...prev, ...Array.from({ length: n - prev.length }, (): DayConfig => ({
-        workout_type: 'rest', workout_subtype: null, zone: 'Z1',
-        duration_min: 0, description: '', is_interval: false, segments: [],
-      }))]
+      return [...prev, ...Array.from({ length: n - prev.length }, emptyDay)]
     })
   }
 
-  const updateDay = (idx: number, patch: Partial<DayConfig>) =>
-    setSchedule((prev) => prev.map((d, i) => (i === idx ? { ...d, ...patch } : d)))
+  const updateDay = (dayIdx: number, workoutIdx: number, patch: Partial<DayConfig>) =>
+    setSchedule((prev) => prev.map((dayWorkouts, i) =>
+      i === dayIdx
+        ? dayWorkouts.map((w, j) => (j === workoutIdx ? { ...w, ...patch } : w))
+        : dayWorkouts
+    ))
+
+  const addWorkoutToDay = (dayIdx: number) =>
+    setSchedule((prev) => prev.map((dayWorkouts, i) =>
+      i === dayIdx
+        ? [...dayWorkouts, { workout_type: 'run', workout_subtype: null, zone: 'Z2', duration_min: 60, description: '', is_interval: false, segments: [] }]
+        : dayWorkouts
+    ))
+
+  const removeWorkoutFromDay = (dayIdx: number, workoutIdx: number) =>
+    setSchedule((prev) => prev.map((dayWorkouts, i) =>
+      i === dayIdx && dayWorkouts.length > 1
+        ? dayWorkouts.filter((_, j) => j !== workoutIdx)
+        : dayWorkouts
+    ))
 
   // ─── Summary stats ─────────────────────────────────────────────────────────
   let totalMin = 0
   const zoneMins: Record<string, number> = { Z1: 0, Z2: 0, Z3: 0, Z4: 0, Z5: 0 }
-  for (const d of schedule) {
+  for (const d of schedule.flat()) {
     if (d.workout_type === 'rest') continue
     if (CYCLIC_TYPES.has(d.workout_type)) {
       if (d.is_interval && d.segments.length) {
@@ -373,7 +437,6 @@ export default function TemplateEditor() {
         totalMin += m
       }
     } else {
-      // нециклические: добавляем только к общему объёму
       totalMin += d.duration_min || 0
     }
   }
@@ -381,12 +444,13 @@ export default function TemplateEditor() {
   const loMin  = (zoneMins.Z1 ?? 0) + (zoneMins.Z2 ?? 0)
   const hiPct  = totalMin > 0 ? Math.round((hiMin / totalMin) * 100) : 0
   const loPct  = totalMin > 0 ? Math.round((loMin / totalMin) * 100) : 0
-  const active = schedule.filter((d) => d.workout_type !== 'rest').length
+  const active = schedule.filter((dayWorkouts) => dayWorkouts.some(d => d.workout_type !== 'rest')).length
 
   // ─── Mutations ─────────────────────────────────────────────────────────────
   const save = useMutation({
     mutationFn: () =>
       plansApi.updateTemplate(templateId!, {
+        group_id: groupId,
         name,
         start_date: startDate,
         duration_days: Number(durationDays),
@@ -418,6 +482,14 @@ export default function TemplateEditor() {
         {/* Meta */}
         <Paper withBorder p="md" radius="md">
           <Group grow align="flex-end">
+            <Select
+              label="Группа"
+              data={groups.map((g) => ({ value: g.id, label: g.name }))}
+              value={groupId}
+              onChange={(v) => setGroupId(v ?? '')}
+              allowDeselect={false}
+              required
+            />
             <TextInput label="Название" value={name}
               onChange={(e) => setName(e.target.value)} required />
             <TextInput label="Дата начала" type="date" value={startDate}
@@ -479,25 +551,68 @@ export default function TemplateEditor() {
                     <Text fw={600}>{getDayLabel(selIdx, startDate)}</Text>
                     <Button size="xs" variant="subtle" color="gray" onClick={() => setSelDayStr(null)}>✕</Button>
                   </Group>
-                  <DayCard
-                    idx={selIdx}
-                    day={schedule[selIdx]}
-                    onChange={updateDay}
-                    label={getDayLabel(selIdx, startDate)}
-                  />
+                  <Stack gap="sm">
+                    {schedule[selIdx].map((day, wi) => (
+                      <Box key={wi}>
+                        {schedule[selIdx].length > 1 && (
+                          <Text size="xs" c="dimmed" fw={600} mb={4}>
+                            Тренировка {wi + 1} из {schedule[selIdx].length}
+                          </Text>
+                        )}
+                        <DayCard
+                          dayIdx={selIdx}
+                          workoutIdx={wi}
+                          day={day}
+                          onChange={updateDay}
+                          onRemove={() => removeWorkoutFromDay(selIdx, wi)}
+                          canRemove={schedule[selIdx].length > 1}
+                          label={getDayLabel(selIdx, startDate)}
+                        />
+                        {wi < schedule[selIdx].length - 1 && <Divider mt="xs" />}
+                      </Box>
+                    ))}
+                    <Button size="xs" variant="light" onClick={() => addWorkoutToDay(selIdx)}>
+                      Добавить тренировку
+                    </Button>
+                  </Stack>
                 </Paper>
               )}
             </Stack>
           ) : (
             <Stack gap="sm">
-              {schedule.map((day, idx) => (
+              {schedule.map((dayWorkouts, idx) => (
                 <Fragment key={idx}>
                   {idx % 7 === 0 && (
                     <Text size="xs" fw={600} c="dimmed" tt="uppercase" mt={idx > 0 ? 'xs' : 0}>
                       Неделя {Math.floor(idx / 7) + 1}
                     </Text>
                   )}
-                  <DayCard idx={idx} day={day} onChange={updateDay} label={getDayLabel(idx, startDate)} />
+                  <Paper withBorder p="xs" radius="sm">
+                    <Stack gap="xs">
+                      {dayWorkouts.map((day, wi) => (
+                        <Box key={wi}>
+                          {dayWorkouts.length > 1 && (
+                            <Text size="xs" c="dimmed" fw={600} mb={4}>
+                              Тренировка {wi + 1} из {dayWorkouts.length}
+                            </Text>
+                          )}
+                          <DayCard
+                            dayIdx={idx}
+                            workoutIdx={wi}
+                            day={day}
+                            onChange={updateDay}
+                            onRemove={() => removeWorkoutFromDay(idx, wi)}
+                            canRemove={dayWorkouts.length > 1}
+                            label={getDayLabel(idx, startDate)}
+                          />
+                          {wi < dayWorkouts.length - 1 && <Divider mt="xs" />}
+                        </Box>
+                      ))}
+                      <Button size="xs" variant="light" onClick={() => addWorkoutToDay(idx)}>
+                        Добавить тренировку
+                      </Button>
+                    </Stack>
+                  </Paper>
                 </Fragment>
               ))}
             </Stack>

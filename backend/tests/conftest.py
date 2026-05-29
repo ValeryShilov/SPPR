@@ -26,16 +26,22 @@ _base_url = os.getenv(
 )
 TEST_DB_URL = os.getenv("TEST_DATABASE_URL", _base_url)
 
-_engine = create_async_engine(TEST_DB_URL, echo=False)
-
-
 @pytest_asyncio.fixture
 async def db():
-    """Сессия SQLAlchemy с автоматическим откатом после каждого теста."""
-    async with AsyncSession(_engine, expire_on_commit=False) as session:
-        session.commit = session.flush  # предотвращает реальные коммиты
-        yield session
-        await session.rollback()
+    """Сессия SQLAlchemy с автоматическим откатом после каждого теста.
+
+    Каждый тест получает свой engine в своём event loop — это исключает
+    ошибки «Future attached to a different loop» в pytest-asyncio с
+    function-scoped event loop по умолчанию.
+    """
+    engine = create_async_engine(TEST_DB_URL, echo=False)
+    try:
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            session.commit = session.flush  # предотвращает реальные коммиты
+            yield session
+            await session.rollback()
+    finally:
+        await engine.dispose()
 
 
 # ─── Вспомогательные фикстуры ───────────────────────────────────────────────
@@ -128,6 +134,7 @@ async def template_data(db):
         start_date=date.today(),
         duration_days=3,
         target_intensity_pct=Decimal("75.00"),
+        week_schedule=[{"workout_type": "run", "zone": "Z2", "duration_min": 60}] * 3,
     )
     db.add(template)
     await db.flush()

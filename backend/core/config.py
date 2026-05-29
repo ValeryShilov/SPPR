@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     ALERT_UNDERLOAD_CTL_DELTA: float = 2.0
     ALERT_UNDERLOAD_TSB_HIGH: float = 15.0
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 
 settings = Settings()

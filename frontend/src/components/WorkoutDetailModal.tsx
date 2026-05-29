@@ -1,4 +1,4 @@
-import { Badge, Box, Button, Divider, Group, Modal, SimpleGrid, Stack, Text, Tooltip } from '@mantine/core'
+import { Badge, Box, Button, Divider, Group, Modal, SimpleGrid, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { telemetryApi } from '../api/telemetry'
@@ -71,9 +71,10 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
 interface Props {
   workout: WorkoutDetail | null
   onClose: () => void
+  onEdit?: () => void
 }
 
-export default function WorkoutDetailModal({ workout, onClose }: Props) {
+export default function WorkoutDetailModal({ workout, onClose, onEdit }: Props) {
   const [chartsOpen, setChartsOpen] = useState(false)
 
   const { data: telemetry } = useQuery<TelemetryData | null>({
@@ -84,8 +85,10 @@ export default function WorkoutDetailModal({ workout, onClose }: Props) {
 
   if (!workout) return null
 
-  const stype  = workout.workout_type ?? 'other'
-  const status = STATUS_META[workout.status] ?? STATUS_META.published
+  const stype    = workout.workout_type ?? 'other'
+  const status   = STATUS_META[workout.status] ?? STATUS_META.published
+  const today    = new Date().toISOString().slice(0, 10)
+  const editable = onEdit && workout.status !== 'completed' && workout.planned_date >= today
 
   // Фактические данные: приоритет на свежие данные из telemetry endpoint
   const tel = telemetry ?? workout
@@ -143,6 +146,24 @@ export default function WorkoutDetailModal({ workout, onClose }: Props) {
                 <div style={{ width: 8, height: 8, borderRadius: '50%', background: status.color, flexShrink: 0 }} />
                 <Text size="xs" c="dimmed">{status.label}</Text>
               </Group>
+              {editable && (
+                <Tooltip label="Редактировать" withArrow>
+                  <UnstyledButton
+                    onClick={() => { onClose(); onEdit!() }}
+                    style={{
+                      fontSize: 16,
+                      lineHeight: 1,
+                      color: '#868e96',
+                      padding: '2px 4px',
+                      borderRadius: 4,
+                      border: '1px solid #dee2e6',
+                      background: '#f8f9fa',
+                    }}
+                  >
+                    ✎
+                  </UnstyledButton>
+                </Tooltip>
+              )}
             </Group>
           </Group>
         }

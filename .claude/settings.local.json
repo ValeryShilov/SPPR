@@ -6,7 +6,9 @@
       "Bash(docker restart *)",
       "Bash(docker cp *)",
       "Bash(cd /d d:\\\\SPPR)",
-      "Bash(docker compose *)"
+      "Bash(docker compose *)",
+      "Bash(docker-compose exec *)",
+      "PowerShell($env:TEST_DATABASE_URL = \"postgresql+asyncpg://sppr:sppr@localhost:5432/sppr\"; python -m pytest backend/tests/test_analytics.py::TestCalculateHRZones::test_returns_5_zones --no-header -s 2>&1 | Select-Object -Last 30)"
     ]
   }
 }

@@ -44,16 +44,17 @@ class PlanTemplateCreate(BaseModel):
     duration_days: int
     target_intensity_pct: Decimal | None = None
     description: str | None = None
-    week_schedule: list[WeekDayConfig] | None = None
+    week_schedule: list[Any] | None = None
 
 
 class PlanTemplateUpdate(BaseModel):
+    group_id: uuid.UUID | None = None
     name: str | None = None
     start_date: date | None = None
     duration_days: int | None = None
     target_intensity_pct: Decimal | None = None
     description: str | None = None
-    week_schedule: list[WeekDayConfig] | None = None
+    week_schedule: list[Any] | None = None
 
 
 class IndividualWorkoutRead(BaseModel):
@@ -92,6 +93,7 @@ class IndividualWorkoutUpdate(BaseModel):
 class SelfWorkoutCreate(BaseModel):
     planned_date: date
     workout_type: str | None = None
+    workout_subtype: str | None = None
 
 
 class IndividualWorkoutCreate(BaseModel):
@@ -110,3 +112,35 @@ class IndividualWorkoutCreate(BaseModel):
 class AdaptTaskResponse(BaseModel):
     task_id: str
     message: str
+
+
+class PlanTemplateSummary(BaseModel):
+    id: uuid.UUID
+    group_id: uuid.UUID
+    group_name: str
+    name: str
+    start_date: date
+    duration_days: int
+    target_intensity_pct: Decimal | None
+    description: str | None
+    total_workouts: int
+    draft_count: int
+    published_count: int
+
+
+class MatrixWorkout(BaseModel):
+    id: uuid.UUID
+    athlete_id: uuid.UUID
+    athlete_first_name: str
+    athlete_last_name: str
+    planned_date: date
+    planned_duration_min: int | None
+    planned_tss: Decimal | None
+    k_qual: Decimal | None
+    k_form: Decimal | None
+    target_zone: str | None
+    workout_type: str | None
+    workout_subtype: str | None
+    description: str | None
+    interval_structure: list[Any] | None
+    status: str

@@ -3,6 +3,7 @@ import {
   Box,
   Button,
   Container,
+  Divider,
   Group,
   Paper,
   Stack,
@@ -36,8 +37,6 @@ interface Workout {
   status: string
 }
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 interface ActualTelemetry {
   source: string
   actual_duration_min: number | null
@@ -68,7 +67,7 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
   draft:      { label: 'Черновик',    color: 'gray'  },
 }
 
-// ─── Calendar cell content ────────────────────────────────────────────────────
+// ─── Calendar cell pill ───────────────────────────────────────────────────────
 
 function WorkoutPill({ w, compact }: { w: Workout; compact?: boolean }) {
   const zone = w.target_zone
@@ -104,13 +103,154 @@ function WorkoutPill({ w, compact }: { w: Workout; compact?: boolean }) {
   )
 }
 
+// ─── Detail section for one workout ──────────────────────────────────────────
+
+function WorkoutDetailSection({ workout }: { workout: Workout }) {
+  const [chartsOpen, setChartsOpen] = useState(false)
+
+  const { data: telemetry } = useQuery<ActualTelemetry | null>({
+    queryKey: ['workout-telemetry', workout.id],
+    queryFn: () => telemetryApi.getWorkoutTelemetry(workout.id) as Promise<ActualTelemetry | null>,
+  })
+
+  return (
+    <Box>
+      {/* Header row */}
+      <Group gap="sm" mb="sm" align="center">
+        {workout.workout_type && (
+          <Text size="sm" c="dimmed">
+            {TYPE_LABEL[workout.workout_type] ?? workout.workout_type}
+            {workout.workout_subtype && ` · ${workout.workout_subtype}`}
+          </Text>
+        )}
+        <Badge color={STATUS_META[workout.status]?.color ?? 'gray'} variant="light" size="sm">
+          {STATUS_META[workout.status]?.label ?? workout.status}
+        </Badge>
+      </Group>
+
+      {/* Plan stats */}
+      <Group gap="xl" mb="sm">
+        {workout.target_zone && (
+          <Stack gap={0} align="center">
+            <Badge color={ZONE_BADGE_COLOR[workout.target_zone] ?? 'gray'} size="lg">
+              {workout.target_zone}
+            </Badge>
+            <Text size="xs" c="dimmed" mt={2}>зона</Text>
+          </Stack>
+        )}
+        {workout.planned_duration_min != null && (
+          <Stack gap={0} align="center">
+            <Text fw={700} size="xl" lh={1}>{workout.planned_duration_min}</Text>
+            <Text size="xs" c="dimmed">мин (план)</Text>
+          </Stack>
+        )}
+        {workout.planned_tss != null && (
+          <Stack gap={0} align="center">
+            <Text fw={700} size="xl" lh={1}>{Number(workout.planned_tss).toFixed(0)}</Text>
+            <Text size="xs" c="dimmed">TSS</Text>
+          </Stack>
+        )}
+      </Group>
+
+      {workout.description && (
+        <Text size="sm" c="dimmed" mb="sm" style={{ fontStyle: 'italic' }}>
+          {workout.description}
+        </Text>
+      )}
+
+      {workout.interval_structure && workout.interval_structure.length > 0 && (
+        <Box mb="sm">
+          <IntervalBar segments={workout.interval_structure} />
+        </Box>
+      )}
+
+      {/* Actual data */}
+      {telemetry && (
+        <Box mb="sm" p="sm" style={{ background: '#f8f9fa', borderRadius: 8 }}>
+          <Group gap="xs" mb="xs">
+            <Badge color="green" variant="filled" size="sm">Выполнено ✓</Badge>
+            <Text size="xs" c="dimmed">
+              {telemetry.source === 'imported' ? 'из файла' : 'вручную'}
+            </Text>
+          </Group>
+          <Group gap="xl">
+            {telemetry.actual_duration_min != null && (
+              <Stack gap={0} align="center">
+                <Text fw={700} size="lg" lh={1}>{telemetry.actual_duration_min}</Text>
+                <Text size="xs" c="dimmed">мин (факт.)</Text>
+              </Stack>
+            )}
+            {telemetry.distance_km != null && (
+              <Stack gap={0} align="center">
+                <Text fw={700} size="lg" lh={1}>{Number(telemetry.distance_km).toFixed(1)}</Text>
+                <Text size="xs" c="dimmed">км</Text>
+              </Stack>
+            )}
+            {telemetry.avg_hr != null && (
+              <Stack gap={0} align="center">
+                <Text fw={700} size="lg" lh={1}>{telemetry.avg_hr}</Text>
+                <Text size="xs" c="dimmed">ЧСС ср.</Text>
+              </Stack>
+            )}
+            {workout.workout_type && PACE_TYPES.has(workout.workout_type) && (() => {
+              const pace = calcPaceSpeed(
+                telemetry.actual_duration_min ?? '',
+                telemetry.distance_km ?? '',
+                workout.workout_type!,
+              )
+              return pace ? (
+                <Stack gap={0} align="center">
+                  <Text fw={700} size="lg" lh={1}>{pace}</Text>
+                  <Text size="xs" c="dimmed">
+                    {workout.workout_type === 'run' ? 'темп' : 'скорость'}
+                  </Text>
+                </Stack>
+              ) : null
+            })()}
+            {telemetry.rpe != null && (
+              <Stack gap={0} align="center">
+                <Text fw={700} size="lg" lh={1}>
+                  {telemetry.rpe}<Text span size="xs" c="dimmed">/10</Text>
+                </Text>
+                <Text size="xs" c="dimmed">самочувствие</Text>
+              </Stack>
+            )}
+          </Group>
+          {telemetry.comment && (
+            <Text size="sm" c="dimmed" mt="xs" style={{ fontStyle: 'italic' }}>
+              {telemetry.comment}
+            </Text>
+          )}
+          {telemetry.timeseries && telemetry.timeseries.length > 0 && (
+            <Button size="xs" variant="subtle" color="blue" mt="xs"
+              onClick={() => setChartsOpen(true)}>
+              📈 Показать графики
+            </Button>
+          )}
+        </Box>
+      )}
+
+      <TelemetryUpload workoutId={workout.id} workoutType={workout.workout_type} />
+
+      {telemetry?.timeseries && telemetry.timeseries.length > 0 && (
+        <WorkoutChartsModal
+          opened={chartsOpen}
+          onClose={() => setChartsOpen(false)}
+          timeseries={telemetry.timeseries}
+          workoutType={workout.workout_type}
+          title={`Графики — ${TYPE_LABEL[workout.workout_type ?? ''] ?? ''}, ${workout.planned_date}`}
+        />
+      )}
+    </Box>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function MyPlan() {
   const [view, setView]               = useState<'month' | 'week'>('week')
   const [displayDate, setDisplayDate] = useState<Date>(new Date())
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
-  const [chartsOpen, setChartsOpen]   = useState(false)
 
   const { data: workouts = [], isLoading } = useQuery<Workout[]>({
     queryKey: ['my-plan'],
@@ -118,16 +258,14 @@ export default function MyPlan() {
   })
 
   // ── Build lookup map ───────────────────────────────────────────────────────
-  const workoutByDate = new Map<string, Workout>()
-  for (const w of workouts) workoutByDate.set(w.planned_date, w)
+  const workoutByDate = new Map<string, Workout[]>()
+  for (const w of workouts) {
+    const arr = workoutByDate.get(w.planned_date) ?? []
+    arr.push(w)
+    workoutByDate.set(w.planned_date, arr)
+  }
 
-  const selectedWorkout = selectedDate ? workoutByDate.get(selectedDate) : undefined
-
-  const { data: selectedTelemetry } = useQuery<ActualTelemetry | null>({
-    queryKey: ['workout-telemetry', selectedWorkout?.id],
-    queryFn: () => telemetryApi.getWorkoutTelemetry(selectedWorkout!.id) as Promise<ActualTelemetry | null>,
-    enabled: !!selectedWorkout?.id,
-  })
+  const selectedWorkouts = selectedDate ? (workoutByDate.get(selectedDate) ?? []) : []
 
   // ── Navigation ────────────────────────────────────────────────────────────
   const navigate = (dir: -1 | 1) => {
@@ -137,7 +275,6 @@ export default function MyPlan() {
     setDisplayDate(d)
   }
 
-  // ── Day click ─────────────────────────────────────────────────────────────
   const handleDayClick = (date: Date) => {
     const iso = isoDate(date)
     setSelectedDate((prev) => (prev === iso ? null : iso))
@@ -145,9 +282,14 @@ export default function MyPlan() {
 
   // ── Cell renderer ─────────────────────────────────────────────────────────
   const renderDay = (date: Date) => {
-    const w = workoutByDate.get(isoDate(date))
-    if (!w) return null
-    return <WorkoutPill w={w} compact={view === 'month'} />
+    const ws = workoutByDate.get(isoDate(date))
+    if (!ws?.length) return null
+    const compact = view === 'month' || ws.length > 1
+    return (
+      <Box>
+        {ws.map((w) => <WorkoutPill key={w.id} w={w} compact={compact} />)}
+      </Box>
+    )
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -162,7 +304,6 @@ export default function MyPlan() {
 
       {workouts.length > 0 && (
         <Stack gap="md">
-          {/* Calendar */}
           <PlanCalendar
             view={view}
             onViewChange={setView}
@@ -173,148 +314,33 @@ export default function MyPlan() {
             selectedDate={selectedDate}
           />
 
-          {/* Selected day panel */}
-          {selectedWorkout && (
+          {selectedWorkouts.length > 0 && (
             <Paper withBorder p="md" radius="md">
-              <Group justify="space-between" mb="sm">
-                <Stack gap={2}>
-                  <Text fw={600}>
-                    {new Date(selectedDate! + 'T00:00:00').toLocaleDateString('ru-RU', {
-                      weekday: 'long', day: 'numeric', month: 'long',
-                    })}
-                  </Text>
-                  {selectedWorkout.workout_type && (
-                    <Text size="sm" c="dimmed">
-                      {TYPE_LABEL[selectedWorkout.workout_type] ?? selectedWorkout.workout_type}
-                      {selectedWorkout.workout_subtype && ` · ${selectedWorkout.workout_subtype}`}
-                    </Text>
-                  )}
-                </Stack>
+              <Group justify="space-between" mb="md">
+                <Text fw={600}>
+                  {new Date(selectedDate! + 'T00:00:00').toLocaleDateString('ru-RU', {
+                    weekday: 'long', day: 'numeric', month: 'long',
+                  })}
+                </Text>
                 <Button size="xs" variant="subtle" color="gray" onClick={() => setSelectedDate(null)}>
                   ✕
                 </Button>
               </Group>
 
-              {/* Stats */}
-              <Group gap="xl" mb="sm">
-                {selectedWorkout.target_zone && (
-                  <Stack gap={0} align="center">
-                    <Badge color={ZONE_BADGE_COLOR[selectedWorkout.target_zone] ?? 'gray'} size="lg">
-                      {selectedWorkout.target_zone}
-                    </Badge>
-                    <Text size="xs" c="dimmed" mt={2}>зона</Text>
-                  </Stack>
-                )}
-                {selectedWorkout.planned_duration_min != null && (
-                  <Stack gap={0} align="center">
-                    <Text fw={700} size="xl" lh={1}>{selectedWorkout.planned_duration_min}</Text>
-                    <Text size="xs" c="dimmed">мин (план)</Text>
-                  </Stack>
-                )}
-                {selectedWorkout.planned_tss != null && (
-                  <Stack gap={0} align="center">
-                    <Text fw={700} size="xl" lh={1}>{Number(selectedWorkout.planned_tss).toFixed(0)}</Text>
-                    <Text size="xs" c="dimmed">TSS</Text>
-                  </Stack>
-                )}
-                <Badge color={STATUS_META[selectedWorkout.status]?.color ?? 'gray'} variant="light">
-                  {STATUS_META[selectedWorkout.status]?.label ?? selectedWorkout.status}
-                </Badge>
-              </Group>
-
-              {selectedWorkout.description && (
-                <Text size="sm" c="dimmed" mb="sm" style={{ fontStyle: 'italic' }}>
-                  {selectedWorkout.description}
-                </Text>
-              )}
-
-              {selectedWorkout.interval_structure && selectedWorkout.interval_structure.length > 0 && (
-                <Box mb="sm">
-                  <IntervalBar segments={selectedWorkout.interval_structure} />
-                </Box>
-              )}
-
-              {/* Фактические данные */}
-              {selectedTelemetry && (
-                <Box mb="sm" p="sm" style={{ background: '#f8f9fa', borderRadius: 8 }}>
-                  <Group gap="xs" mb="xs">
-                    <Badge color="green" variant="filled" size="sm">Выполнено ✓</Badge>
-                    <Text size="xs" c="dimmed">
-                      {selectedTelemetry.source === 'imported' ? 'из файла' : 'вручную'}
-                    </Text>
-                  </Group>
-                  <Group gap="xl">
-                    {selectedTelemetry.actual_duration_min != null && (
-                      <Stack gap={0} align="center">
-                        <Text fw={700} size="lg" lh={1}>{selectedTelemetry.actual_duration_min}</Text>
-                        <Text size="xs" c="dimmed">мин (факт.)</Text>
-                      </Stack>
-                    )}
-                    {selectedTelemetry.distance_km != null && (
-                      <Stack gap={0} align="center">
-                        <Text fw={700} size="lg" lh={1}>{Number(selectedTelemetry.distance_km).toFixed(1)}</Text>
-                        <Text size="xs" c="dimmed">км</Text>
-                      </Stack>
-                    )}
-                    {selectedTelemetry.avg_hr != null && (
-                      <Stack gap={0} align="center">
-                        <Text fw={700} size="lg" lh={1}>{selectedTelemetry.avg_hr}</Text>
-                        <Text size="xs" c="dimmed">ЧСС ср.</Text>
-                      </Stack>
-                    )}
-                    {selectedWorkout.workout_type && PACE_TYPES.has(selectedWorkout.workout_type) && (() => {
-                      const pace = calcPaceSpeed(
-                        selectedTelemetry.actual_duration_min ?? '',
-                        selectedTelemetry.distance_km ?? '',
-                        selectedWorkout.workout_type!,
-                      )
-                      return pace ? (
-                        <Stack gap={0} align="center">
-                          <Text fw={700} size="lg" lh={1}>{pace}</Text>
-                          <Text size="xs" c="dimmed">
-                            {selectedWorkout.workout_type === 'run' ? 'темп' : 'скорость'}
-                          </Text>
-                        </Stack>
-                      ) : null
-                    })()}
-                    {selectedTelemetry.rpe != null && (
-                      <Stack gap={0} align="center">
-                        <Text fw={700} size="lg" lh={1}>
-                          {selectedTelemetry.rpe}<Text span size="xs" c="dimmed">/10</Text>
-                        </Text>
-                        <Text size="xs" c="dimmed">самочувствие</Text>
-                      </Stack>
-                    )}
-                  </Group>
-                  {selectedTelemetry.comment && (
-                    <Text size="sm" c="dimmed" mt="xs" style={{ fontStyle: 'italic' }}>
-                      {selectedTelemetry.comment}
+              {selectedWorkouts.map((w, i) => (
+                <Box key={w.id}>
+                  {i > 0 && <Divider my="md" />}
+                  {selectedWorkouts.length > 1 && (
+                    <Text size="xs" c="dimmed" fw={600} mb="xs">
+                      Тренировка {i + 1} из {selectedWorkouts.length}
                     </Text>
                   )}
-                  {selectedTelemetry.timeseries && selectedTelemetry.timeseries.length > 0 && (
-                    <Button
-                      size="xs" variant="subtle" color="blue" mt="xs"
-                      onClick={() => setChartsOpen(true)}
-                    >
-                      📈 Показать графики
-                    </Button>
-                  )}
+                  <WorkoutDetailSection workout={w} />
                 </Box>
-              )}
-
-              <TelemetryUpload workoutId={selectedWorkout.id} workoutType={selectedWorkout.workout_type} />
+              ))}
             </Paper>
           )}
         </Stack>
-      )}
-      {selectedTelemetry?.timeseries && selectedTelemetry.timeseries.length > 0 && (
-        <WorkoutChartsModal
-          opened={chartsOpen}
-          onClose={() => setChartsOpen(false)}
-          timeseries={selectedTelemetry.timeseries}
-          workoutType={selectedWorkout?.workout_type}
-          title={selectedWorkout ? `Графики — ${TYPE_LABEL[selectedWorkout.workout_type ?? ''] ?? ''}, ${selectedDate}` : 'Графики'}
-        />
       )}
     </Container>
   )

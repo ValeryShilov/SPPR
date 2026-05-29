@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import settings
 from backend.models.alerts import DiagnosticAlert
+from backend.models.settings import AlertSettings
 from backend.models.athlete import (
     AthleteProfile,
     PhysiologicalMarker,
@@ -39,6 +40,45 @@ from backend.models.plan import IndividualWorkout, PlanTemplate
 from backend.models.telemetry import ActualTelemetry
 from backend.schemas.analytics import AlertRead
 from backend.schemas.athlete import HRZone, HRZonesResponse
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Пороги алертов (загружаются из БД; умолчания из config.py)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@dataclass(slots=True)
+class _Thresholds:
+    p1_tsb_threshold:  float = -30.0
+    p2_resting_hr_pct: float = 7.0
+    p3_hrv_pct:        float = 85.0
+    p5_z45_pct:        float = 20.0
+    h1_ctl_delta:      float = 2.0
+    h2_tsb_high:       float = 15.0
+    h3_tss_pct:        float = 50.0
+    h5_z12_pct:        float = 75.0
+
+
+async def _load_thresholds(db: AsyncSession) -> _Thresholds:
+    result = await db.execute(select(AlertSettings).where(AlertSettings.id == 1))
+    row = result.scalar_one_or_none()
+    if row is None:
+        return _Thresholds(
+            p1_tsb_threshold=settings.ALERT_OVERLOAD_TSB_THRESHOLD,
+            p2_resting_hr_pct=settings.ALERT_OVERLOAD_RESTING_HR_PCT,
+            p3_hrv_pct=settings.ALERT_OVERLOAD_HRV_PCT,
+            h1_ctl_delta=settings.ALERT_UNDERLOAD_CTL_DELTA,
+            h2_tsb_high=settings.ALERT_UNDERLOAD_TSB_HIGH,
+        )
+    return _Thresholds(
+        p1_tsb_threshold=row.p1_tsb_threshold,
+        p2_resting_hr_pct=row.p2_resting_hr_pct,
+        p3_hrv_pct=row.p3_hrv_pct,
+        p5_z45_pct=row.p5_z45_pct,
+        h1_ctl_delta=row.h1_ctl_delta,
+        h2_tsb_high=row.h2_tsb_high,
+        h3_tss_pct=row.h3_tss_pct,
+        h5_z12_pct=row.h5_z12_pct,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -68,10 +108,10 @@ _ZONE_MIDPOINTS: dict[str, float] = {z: (lo + hi) / 2 for z, _, lo, hi in _ZONE_
 def _k_qual(qualification: str | None) -> float:
     """k_qual по строке квалификации: МС/МСМК→1.20, КМС→1.10, I→1.00, II/III→0.85, else→0.70."""
     q = (qualification or "").strip().upper()
-    if "МС" in q:
-        return 1.20
     if "КМС" in q:
         return 1.10
+    if "МС" in q:
+        return 1.20
     if "I" in q and "II" not in q and "III" not in q:
         return 1.00
     if "II" in q or "III" in q:
@@ -362,6 +402,7 @@ class _AlertContext:
     tel7:            list[ActualTelemetry]         # телеметрия за 7 дней
     tel28:           list[ActualTelemetry]         # телеметрия за 28 дней
     hrv_base_marker: PhysiologicalMarker | None
+    thresholds:      _Thresholds = None            # загружается в _load_alert_context
 
 
 async def _fetch_athlete_telemetry(
@@ -436,6 +477,7 @@ async def _load_alert_context(
         tel7=await _fetch_athlete_telemetry(athlete_id, 7, db),
         tel28=await _fetch_athlete_telemetry(athlete_id, 28, db),
         hrv_base_marker=res_hrv.scalar_one_or_none(),
+        thresholds=await _load_thresholds(db),
     )
 
 
@@ -449,33 +491,34 @@ _Condition = tuple[str, str, str]
 
 def _check_p1(ctx: _AlertContext) -> _Condition | None:
     """П1: TSB < порога три и более дней подряд → critical."""
-    n = _trailing_run(ctx.tsb_series, lambda v: v < settings.ALERT_OVERLOAD_TSB_THRESHOLD)
+    thr = ctx.thresholds.p1_tsb_threshold
+    n = _trailing_run(ctx.tsb_series, lambda v: v < thr)
     if n >= 3:
         return ("П1", "critical",
-                f"TSB < {settings.ALERT_OVERLOAD_TSB_THRESHOLD:.0f} "
-                f"на протяжении {n} дней подряд")
+                f"TSB < {thr:.0f} на протяжении {n} дней подряд")
     return None
 
 
 def _check_p2(ctx: _AlertContext) -> _Condition | None:
-    """П2: ЧСС покоя > 7% от 14-дневной нормы → warning."""
+    """П2: ЧСС покоя > N% от 14-дневной нормы → warning."""
     pm14 = [r for r in ctx.pm_rows
             if r.resting_hr is not None
             and r.date_recorded >= ctx.today - timedelta(days=14)]
     if len(pm14) < 2:
         return None
+    pct = ctx.thresholds.p2_resting_hr_pct
     baseline = sum(float(r.resting_hr) for r in pm14[:-1]) / len(pm14[:-1])
     latest = float(pm14[-1].resting_hr)
-    limit = baseline * (1 + settings.ALERT_OVERLOAD_RESTING_HR_PCT / 100)
+    limit = baseline * (1 + pct / 100)
     if baseline > 0 and latest > limit:
         return ("П2", "warning",
                 f"ЧСС покоя ({latest:.0f}) превышает 14-дневную норму ({baseline:.0f}) "
-                f"более чем на {settings.ALERT_OVERLOAD_RESTING_HR_PCT:.0f}%")
+                f"более чем на {pct:.0f}%")
     return None
 
 
 def _check_p3(ctx: _AlertContext) -> _Condition | None:
-    """П3: средний HRV за 7 дней < 85% от базового → warning."""
+    """П3: средний HRV за 7 дней < N% от базового → warning."""
     m = ctx.hrv_base_marker
     if not m or not m.hrv_baseline:
         return None
@@ -487,12 +530,13 @@ def _check_p3(ctx: _AlertContext) -> _Condition | None:
     ]
     if not hrv_vals:
         return None
+    pct = ctx.thresholds.p3_hrv_pct
     avg = sum(hrv_vals) / len(hrv_vals)
     baseline = float(m.hrv_baseline)
-    if avg < baseline * (settings.ALERT_OVERLOAD_HRV_PCT / 100):
+    if avg < baseline * (pct / 100):
         return ("П3", "warning",
                 f"Средний HRV за 7 дней ({avg:.0f}) ниже "
-                f"{settings.ALERT_OVERLOAD_HRV_PCT:.0f}% от базового ({baseline:.0f})")
+                f"{pct:.0f}% от базового ({baseline:.0f})")
     return None
 
 
@@ -510,12 +554,13 @@ def _check_p4(ctx: _AlertContext) -> _Condition | None:
 
 
 def _check_p5(ctx: _AlertContext) -> _Condition | None:
-    """П5: доля Z4+Z5 за неделю > 20% → info."""
+    """П5: доля Z4+Z5 за неделю > N% → info."""
     total = sum(_zone_total_min(t) for t in ctx.tel7)
     high  = sum((t.hr_zone4_min or 0) + (t.hr_zone5_min or 0) for t in ctx.tel7)
-    if total > 0 and high / total > 0.20:
+    pct   = ctx.thresholds.p5_z45_pct
+    if total > 0 and high / total * 100 > pct:
         return ("П5", "info",
-                f"Доля Z4+Z5 за неделю: {high / total * 100:.1f}% (норма ≤ 20%)")
+                f"Доля Z4+Z5 за неделю: {high / total * 100:.1f}% (норма ≤ {pct:.0f}%)")
     return None
 
 
@@ -524,33 +569,34 @@ def _check_h1(ctx: _AlertContext) -> _Condition | None:
     if len(ctx.ctl14) < 2:
         return None
     delta = abs(ctx.ctl14[-1] - ctx.ctl14[0])
-    if delta < settings.ALERT_UNDERLOAD_CTL_DELTA:
+    thr   = ctx.thresholds.h1_ctl_delta
+    if delta < thr:
         return ("Н1", "info",
-                f"CTL изменился на {delta:.2f} за 14 дней "
-                f"(норма ≥ {settings.ALERT_UNDERLOAD_CTL_DELTA})")
+                f"CTL изменился на {delta:.2f} за 14 дней (норма ≥ {thr})")
     return None
 
 
 def _check_h2(ctx: _AlertContext) -> _Condition | None:
     """Н2: TSB > порога семь и более дней подряд → info."""
-    n = _trailing_run(ctx.tsb_series, lambda v: v > settings.ALERT_UNDERLOAD_TSB_HIGH)
+    thr = ctx.thresholds.h2_tsb_high
+    n   = _trailing_run(ctx.tsb_series, lambda v: v > thr)
     if n >= 7:
         return ("Н2", "info",
-                f"TSB > {settings.ALERT_UNDERLOAD_TSB_HIGH:.0f} "
-                f"на протяжении {n} дней подряд")
+                f"TSB > {thr:.0f} на протяжении {n} дней подряд")
     return None
 
 
 def _check_h3(ctx: _AlertContext) -> _Condition | None:
-    """Н3: TSS за неделю < 50% среднего за 8 недель → warning."""
+    """Н3: TSS за неделю < N% среднего за 8 недель → warning."""
     tss_week = sum(float(r.daily_tss) for r in ctx.tlh_rows
                    if r.date >= ctx.today - timedelta(days=7))
-    tss_all  = sum(float(r.daily_tss) for r in ctx.tlh_rows)
-    weeks    = max(1, min(8, len(ctx.tlh_rows) // 7))
+    tss_all    = sum(float(r.daily_tss) for r in ctx.tlh_rows)
+    weeks      = max(1, min(8, len(ctx.tlh_rows) // 7))
     avg_weekly = tss_all / weeks
-    if avg_weekly > 0 and tss_week < avg_weekly * 0.50:
+    pct        = ctx.thresholds.h3_tss_pct
+    if avg_weekly > 0 and tss_week < avg_weekly * (pct / 100):
         return ("Н3", "warning",
-                f"TSS за неделю ({tss_week:.0f}) < 50% "
+                f"TSS за неделю ({tss_week:.0f}) < {pct:.0f}% "
                 f"от средненедельного ({avg_weekly:.0f})")
     return None
 
@@ -558,7 +604,7 @@ def _check_h3(ctx: _AlertContext) -> _Condition | None:
 def _check_h4(ctx: _AlertContext) -> _Condition | None:
     """Н4: ЧСС покоя снизился > 5% за 30 дней И стагнирует CTL → info."""
     # Условие Н1 проверяется внутри — Н4 независим от факта срабатывания Н1
-    if len(ctx.ctl14) < 2 or abs(ctx.ctl14[-1] - ctx.ctl14[0]) >= settings.ALERT_UNDERLOAD_CTL_DELTA:
+    if len(ctx.ctl14) < 2 or abs(ctx.ctl14[-1] - ctx.ctl14[0]) >= ctx.thresholds.h1_ctl_delta:
         return None
     pm_hr = [r for r in ctx.pm_rows if r.resting_hr is not None]
     if len(pm_hr) < 2:
@@ -572,12 +618,13 @@ def _check_h4(ctx: _AlertContext) -> _Condition | None:
 
 
 def _check_h5(ctx: _AlertContext) -> _Condition | None:
-    """Н5: доля Z1+Z2 за 4 недели < 75% → info."""
+    """Н5: доля Z1+Z2 за 4 недели < N% → info."""
     total = sum(_zone_total_min(t) for t in ctx.tel28)
     low   = sum((t.hr_zone1_min or 0) + (t.hr_zone2_min or 0) for t in ctx.tel28)
-    if total > 0 and low / total < 0.75:
+    pct   = ctx.thresholds.h5_z12_pct
+    if total > 0 and low / total * 100 < pct:
         return ("Н5", "info",
-                f"Доля Z1+Z2 за 4 недели: {low / total * 100:.1f}% (норма ≥ 75%)")
+                f"Доля Z1+Z2 за 4 недели: {low / total * 100:.1f}% (норма ≥ {pct:.0f}%)")
     return None
 
 
@@ -695,11 +742,11 @@ async def adapt_template(template_id: uuid.UUID, db: AsyncSession) -> list[uuid.
         return []
 
     _CYCLIC = frozenset({"ski", "skiroll", "run", "bike"})
+    default_zone = "Z2"
 
-    default_zone = _zone_for_pct(float(template.target_intensity_pct or 75))
-    schedule: list[dict] = template.week_schedule or [
-        {"workout_type": "run", "zone": default_zone, "duration_min": 60}
-    ] * 7
+    schedule: list[dict] = template.week_schedule or []
+    if not schedule:
+        return []
 
     # Удаляем старые незавершённые тренировки этого шаблона, чтобы не накапливать дубли
     date_end = template.start_date + timedelta(days=template.duration_days - 1)
@@ -716,79 +763,83 @@ async def adapt_template(template_id: uuid.UUID, db: AsyncSession) -> list[uuid.
 
     for membership in memberships:
         for day_offset in range(template.duration_days):
-            day_cfg = schedule[day_offset % 7]
-            w_type = day_cfg.get("workout_type") or "run"
+            raw_entry = schedule[day_offset % len(schedule)]
+            # Support both old format (single dict) and new format (list of dicts)
+            day_cfgs: list[dict] = raw_entry if isinstance(raw_entry, list) else [raw_entry]
 
-            if w_type == "rest":
-                continue
+            for day_cfg in day_cfgs:
+                w_type = day_cfg.get("workout_type") or "run"
 
-            is_cyclic = w_type in _CYCLIC
-            interval_structure = day_cfg.get("interval_structure") or []
-            w_id = uuid.uuid4()
-
-            if is_cyclic:
-                if interval_structure:
-                    work_segs = [s for s in interval_structure if s.get("seg_type") == "work"]
-                    zone = work_segs[0]["zone"] if work_segs else day_cfg.get("zone", default_zone)
-                    duration = sum(
-                        s.get("duration_min", 0) * s.get("repeats", 1)
-                        for s in interval_structure
-                    )
-                else:
-                    zone = day_cfg.get("zone", default_zone)
-                    base_dur = int(day_cfg.get("duration_min") or 60)
-                    params_scale = await _resolve_athlete_params(membership.athlete_id, zone, db)
-                    if params_scale is None:
-                        continue
-                    duration = max(
-                        min(round(base_dur * params_scale.kq * params_scale.kf),
-                            _ZONE_MAX_MIN.get(zone, 240)),
-                        20,
-                    )
-
-                params = await _resolve_athlete_params(membership.athlete_id, zone, db)
-                if params is None:
+                if w_type == "rest":
                     continue
-                planned_tss = _prognosis_tss(duration, zone, params.max_hr, params.thr_hr)
 
-                db.add(IndividualWorkout(
-                    id=w_id,
-                    template_id=template.id,
-                    athlete_id=membership.athlete_id,
-                    marker_id_used=params.marker_id,
-                    planned_date=template.start_date + timedelta(days=day_offset),
-                    planned_duration_min=duration,
-                    planned_tss=planned_tss,
-                    k_qual=_dec(params.kq, 3),
-                    k_form=_dec(params.kf, 3),
-                    target_zone=zone,
-                    workout_type=w_type,
-                    workout_subtype=day_cfg.get("workout_subtype"),
-                    description=day_cfg.get("description"),
-                    interval_structure=interval_structure or None,
-                    status="draft",
-                ))
-            else:
-                dur = int(day_cfg.get("duration_min") or 0) or None
-                db.add(IndividualWorkout(
-                    id=w_id,
-                    template_id=template.id,
-                    athlete_id=membership.athlete_id,
-                    marker_id_used=None,
-                    planned_date=template.start_date + timedelta(days=day_offset),
-                    planned_duration_min=dur,
-                    planned_tss=None,
-                    k_qual=None,
-                    k_form=None,
-                    target_zone=None,
-                    workout_type=w_type,
-                    workout_subtype=day_cfg.get("workout_subtype"),
-                    description=day_cfg.get("description"),
-                    interval_structure=None,
-                    status="draft",
-                ))
+                is_cyclic = w_type in _CYCLIC
+                interval_structure = day_cfg.get("interval_structure") or []
+                w_id = uuid.uuid4()
 
-            created_ids.append(w_id)
+                if is_cyclic:
+                    if interval_structure:
+                        work_segs = [s for s in interval_structure if s.get("seg_type") == "work"]
+                        zone = work_segs[0]["zone"] if work_segs else day_cfg.get("zone", default_zone)
+                        duration = sum(
+                            s.get("duration_min", 0) * s.get("repeats", 1)
+                            for s in interval_structure
+                        )
+                    else:
+                        zone = day_cfg.get("zone", default_zone)
+                        base_dur = int(day_cfg.get("duration_min") or 60)
+                        params_scale = await _resolve_athlete_params(membership.athlete_id, zone, db)
+                        if params_scale is None:
+                            continue
+                        duration = max(
+                            min(round(base_dur * params_scale.kq * params_scale.kf),
+                                _ZONE_MAX_MIN.get(zone, 240)),
+                            20,
+                        )
+
+                    params = await _resolve_athlete_params(membership.athlete_id, zone, db)
+                    if params is None:
+                        continue
+                    planned_tss = _prognosis_tss(duration, zone, params.max_hr, params.thr_hr)
+
+                    db.add(IndividualWorkout(
+                        id=w_id,
+                        template_id=template.id,
+                        athlete_id=membership.athlete_id,
+                        marker_id_used=params.marker_id,
+                        planned_date=template.start_date + timedelta(days=day_offset),
+                        planned_duration_min=duration,
+                        planned_tss=planned_tss,
+                        k_qual=_dec(params.kq, 3),
+                        k_form=_dec(params.kf, 3),
+                        target_zone=zone,
+                        workout_type=w_type,
+                        workout_subtype=day_cfg.get("workout_subtype"),
+                        description=day_cfg.get("description"),
+                        interval_structure=interval_structure or None,
+                        status="draft",
+                    ))
+                else:
+                    dur = int(day_cfg.get("duration_min") or 0) or None
+                    db.add(IndividualWorkout(
+                        id=w_id,
+                        template_id=template.id,
+                        athlete_id=membership.athlete_id,
+                        marker_id_used=None,
+                        planned_date=template.start_date + timedelta(days=day_offset),
+                        planned_duration_min=dur,
+                        planned_tss=None,
+                        k_qual=None,
+                        k_form=None,
+                        target_zone=None,
+                        workout_type=w_type,
+                        workout_subtype=day_cfg.get("workout_subtype"),
+                        description=day_cfg.get("description"),
+                        interval_structure=None,
+                        status="draft",
+                    ))
+
+                created_ids.append(w_id)
 
     await db.commit()
     return created_ids

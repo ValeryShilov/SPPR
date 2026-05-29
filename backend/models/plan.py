@@ -65,8 +65,8 @@ class IndividualWorkout(Base):
     athlete: Mapped["AthleteProfile"] = relationship(back_populates="individual_workouts")
     marker_used: Mapped["PhysiologicalMarker | None"] = relationship(back_populates="individual_workouts")
     actual_telemetry: Mapped["ActualTelemetry | None"] = relationship(
-        back_populates="workout", uselist=False
+        back_populates="workout", uselist=False, cascade="all, delete-orphan"
     )
     diagnostic_alerts: Mapped[list["DiagnosticAlert"]] = relationship(
-        back_populates="triggered_by_workout"
+        back_populates="triggered_by_workout", cascade="all, delete-orphan"
     )
