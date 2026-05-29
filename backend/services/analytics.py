@@ -788,30 +788,36 @@ async def adapt_template(template_id: uuid.UUID, db: AsyncSession) -> list[uuid.
                     else:
                         zone = day_cfg.get("zone", default_zone)
                         base_dur = int(day_cfg.get("duration_min") or 60)
-                        params_scale = await _resolve_athlete_params(membership.athlete_id, zone, db)
-                        if params_scale is None:
-                            continue
-                        duration = max(
-                            min(round(base_dur * params_scale.kq * params_scale.kf),
-                                _ZONE_MAX_MIN.get(zone, 240)),
-                            20,
-                        )
 
+                    # Единственный вызов: при отсутствии маркеров/профиля создаём тренировку
+                    # с базовыми параметрами вместо молчаливого пропуска атлета
                     params = await _resolve_athlete_params(membership.athlete_id, zone, db)
-                    if params is None:
-                        continue
-                    planned_tss = _prognosis_tss(duration, zone, params.max_hr, params.thr_hr)
+
+                    if not interval_structure:
+                        if params is not None:
+                            duration = max(
+                                min(round(base_dur * params.kq * params.kf),
+                                    _ZONE_MAX_MIN.get(zone, 240)),
+                                20,
+                            )
+                        else:
+                            duration = base_dur
+
+                    planned_tss = (
+                        _prognosis_tss(duration, zone, params.max_hr, params.thr_hr)
+                        if params else None
+                    )
 
                     db.add(IndividualWorkout(
                         id=w_id,
                         template_id=template.id,
                         athlete_id=membership.athlete_id,
-                        marker_id_used=params.marker_id,
+                        marker_id_used=params.marker_id if params else None,
                         planned_date=template.start_date + timedelta(days=day_offset),
                         planned_duration_min=duration,
                         planned_tss=planned_tss,
-                        k_qual=_dec(params.kq, 3),
-                        k_form=_dec(params.kf, 3),
+                        k_qual=_dec(params.kq, 3) if params else None,
+                        k_form=_dec(params.kf, 3) if params else None,
                         target_zone=zone,
                         workout_type=w_type,
                         workout_subtype=day_cfg.get("workout_subtype"),

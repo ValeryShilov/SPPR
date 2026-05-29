@@ -19,12 +19,15 @@ const segFlex = (seg: IntervalSegment) =>
     ? seg.distance_km * seg.repeats * 6
     : (seg.duration_min ?? 0) * seg.repeats
 
+export interface HRZoneRange { hr_min: number; hr_max: number }
+
 interface Props {
   segments: IntervalSegment[]
   height?: number
+  hrZones?: Record<string, HRZoneRange>
 }
 
-export default function IntervalBar({ segments, height = 28 }: Props) {
+export default function IntervalBar({ segments, height = 28, hrZones }: Props) {
   const totalFlex = segments.reduce((s, seg) => s + segFlex(seg), 0)
   if (!segments.length || totalFlex === 0) return null
 
@@ -49,7 +52,9 @@ export default function IntervalBar({ segments, height = 28 }: Props) {
             : seg.distance_km != null
               ? `${seg.zone} ${seg.distance_km}км`
               : `${seg.zone} ${seg.duration_min}м`
-          const tip = `${SEG_TYPE_LABELS[seg.seg_type] ?? seg.seg_type}: ${seg.zone}, ${
+          const hr = hrZones?.[seg.zone]
+          const hrStr = hr ? ` (${hr.hr_min}–${hr.hr_max} уд/мин)` : ''
+          const tip = `${SEG_TYPE_LABELS[seg.seg_type] ?? seg.seg_type}: ${seg.zone}${hrStr}, ${
             seg.distance_km != null
               ? `${seg.distance_km}км`
               : `${seg.duration_min}мин`

@@ -144,3 +144,27 @@ class MatrixWorkout(BaseModel):
     description: str | None
     interval_structure: list[Any] | None
     status: str
+
+
+class GroupMemberRead(BaseModel):
+    athlete_id: uuid.UUID
+    first_name: str
+    last_name: str
+
+
+class MatrixAlertRead(BaseModel):
+    id: uuid.UUID
+    workout_id: uuid.UUID | None
+    athlete_id: uuid.UUID
+    severity: str  # info | warning | critical
+    rule_code: str
+    message: str
+    is_resolved: bool
+
+
+class WeekConflict(BaseModel):
+    athlete_id: uuid.UUID
+    first_name: str
+    last_name: str
+    planned_date: date
+    workout_count: int

@@ -2,7 +2,7 @@ import uuid
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, case, delete, func, select, update
+from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -13,14 +13,21 @@ from backend.models.group import GroupMembership, TrainingGroup
 from backend.models.plan import IndividualWorkout, PlanTemplate
 from backend.models.telemetry import ActualTelemetry
 from backend.models.user import User
+from backend.models.athlete import AthleteProfile
+from backend.schemas.athlete import HRZonesResponse
 from backend.schemas.plan import (
     AdaptTaskResponse,
+    GroupMemberRead,
+    MatrixAlertRead,
     MatrixWorkout,
     PlanTemplateCreate,
     PlanTemplateRead,
     PlanTemplateSummary,
     PlanTemplateUpdate,
+    WeekConflict,
 )
+from backend.services.analytics import adapt_template as adapt_template_sync_fn
+from backend.services.analytics import calculate_hr_zones
 from backend.tasks.planning import adapt_template_task
 
 router = APIRouter()
@@ -181,8 +188,20 @@ async def update_template(
 ):
     tmpl = await _get_owned_template(template_id, db, current_user)
 
+    group_changed = data.group_id is not None and data.group_id != tmpl.group_id
+
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(tmpl, field, value)
+
+    if group_changed:
+        # При смене группы удаляем все незавершённые тренировки,
+        # чтобы матрица не показывала атлетов из старой группы.
+        await db.execute(
+            delete(IndividualWorkout).where(
+                IndividualWorkout.template_id == template_id,
+                IndividualWorkout.status != "completed",
+            )
+        )
 
     await db.commit()
     await db.refresh(tmpl)
@@ -229,6 +248,22 @@ async def adapt_template(
     return AdaptTaskResponse(
         task_id=task.id,
         message=f"Адаптация шаблона {template_id} запущена",
+    )
+
+
+@router.post("/{template_id}/adapt-sync", response_model=AdaptTaskResponse)
+async def adapt_template_sync(
+    template_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_coach),
+):
+    """Синхронная адаптация — выполняется в рамках запроса, результат возвращается сразу."""
+    await _get_owned_template(template_id, db, current_user)
+
+    ids = await adapt_template_sync_fn(template_id, db)
+    return AdaptTaskResponse(
+        task_id="sync",
+        message=f"Адаптировано {len(ids)} тренировок",
     )
 
 
@@ -288,6 +323,158 @@ async def get_matrix(
             status=w.status,
         )
         for w in workouts
+    ]
+
+
+@router.get("/{template_id}/group-members", response_model=list[GroupMemberRead])
+async def get_group_members(
+    template_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_coach),
+):
+    tmpl = await _get_owned_template(template_id, db, current_user)
+
+    result = await db.execute(
+        select(
+            GroupMembership.athlete_id,
+            AthleteProfile.first_name,
+            AthleteProfile.last_name,
+        )
+        .join(AthleteProfile, GroupMembership.athlete_id == AthleteProfile.id)
+        .where(
+            GroupMembership.group_id == tmpl.group_id,
+            GroupMembership.is_active.is_(True),
+        )
+    )
+    return [
+        GroupMemberRead(athlete_id=row.athlete_id, first_name=row.first_name, last_name=row.last_name)
+        for row in result.all()
+    ]
+
+
+@router.get("/{template_id}/athlete-zones", response_model=list[HRZonesResponse])
+async def get_athlete_zones(
+    template_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_coach),
+):
+    tmpl = await _get_owned_template(template_id, db, current_user)
+
+    memberships_result = await db.execute(
+        select(GroupMembership.athlete_id)
+        .where(
+            GroupMembership.group_id == tmpl.group_id,
+            GroupMembership.is_active.is_(True),
+        )
+    )
+    athlete_ids = memberships_result.scalars().all()
+
+    zones: list[HRZonesResponse] = []
+    for aid in athlete_ids:
+        try:
+            z = await calculate_hr_zones(aid, db)
+            zones.append(z)
+        except Exception:
+            pass
+    return zones
+
+
+@router.get("/{template_id}/alerts", response_model=list[MatrixAlertRead])
+async def get_template_alerts(
+    template_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_coach),
+):
+    tmpl = await _get_owned_template(template_id, db, current_user)
+
+    athlete_ids_result = await db.execute(
+        select(GroupMembership.athlete_id).where(
+            GroupMembership.group_id == tmpl.group_id,
+            GroupMembership.is_active.is_(True),
+        )
+    )
+    athlete_ids = athlete_ids_result.scalars().all()
+    if not athlete_ids:
+        return []
+
+    alerts_result = await db.execute(
+        select(DiagnosticAlert).where(
+            DiagnosticAlert.athlete_id.in_(athlete_ids),
+            DiagnosticAlert.is_resolved.is_(False),
+        ).order_by(DiagnosticAlert.created_at.desc())
+    )
+    alerts = alerts_result.scalars().all()
+
+    return [
+        MatrixAlertRead(
+            id=a.id,
+            workout_id=a.triggered_by_workout_id,
+            athlete_id=a.athlete_id,
+            severity=a.severity,
+            rule_code=a.rule_code,
+            message=a.message,
+            is_resolved=a.is_resolved,
+        )
+        for a in alerts
+    ]
+
+
+@router.get("/{template_id}/week-conflicts", response_model=list[WeekConflict])
+async def get_week_conflicts(
+    template_id: uuid.UUID,
+    week_start: date = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_coach),
+):
+    tmpl = await _get_owned_template(template_id, db, current_user)
+    week_end = week_start + timedelta(days=6)
+
+    memberships_result = await db.execute(
+        select(GroupMembership.athlete_id).where(
+            GroupMembership.group_id == tmpl.group_id,
+            GroupMembership.is_active.is_(True),
+        )
+    )
+    athlete_ids = memberships_result.scalars().all()
+    if not athlete_ids:
+        return []
+
+    conflicts_result = await db.execute(
+        select(
+            IndividualWorkout.athlete_id,
+            AthleteProfile.first_name,
+            AthleteProfile.last_name,
+            IndividualWorkout.planned_date,
+            func.count(IndividualWorkout.id).label("workout_count"),
+        )
+        .join(AthleteProfile, IndividualWorkout.athlete_id == AthleteProfile.id)
+        .where(
+            IndividualWorkout.athlete_id.in_(athlete_ids),
+            IndividualWorkout.planned_date >= week_start,
+            IndividualWorkout.planned_date <= week_end,
+            or_(
+                IndividualWorkout.template_id.is_(None),
+                IndividualWorkout.template_id != template_id,
+            ),
+            IndividualWorkout.status.in_(["published", "completed"]),
+        )
+        .group_by(
+            IndividualWorkout.athlete_id,
+            AthleteProfile.first_name,
+            AthleteProfile.last_name,
+            IndividualWorkout.planned_date,
+        )
+    )
+
+    return [
+        WeekConflict(
+            athlete_id=row.athlete_id,
+            first_name=row.first_name,
+            last_name=row.last_name,
+            planned_date=row.planned_date,
+            workout_count=row.workout_count,
+        )
+        for row in conflicts_result.all()
     ]
 
 

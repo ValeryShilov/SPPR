@@ -7,7 +7,13 @@ export const plansApi = {
   updateTemplate: (id: string, data: unknown) =>
     apiClient.put(`/templates/${id}`, data).then((r) => r.data),
   adaptTemplate: (id: string) => apiClient.post(`/templates/${id}/adapt`).then((r) => r.data),
+  adaptTemplateSync: (id: string) => apiClient.post(`/templates/${id}/adapt-sync`).then((r) => r.data),
   getMatrix: (id: string) => apiClient.get(`/templates/${id}/matrix`).then((r) => r.data),
+  getGroupMembers: (id: string) => apiClient.get(`/templates/${id}/group-members`).then((r) => r.data),
+  getAthleteZones: (id: string) => apiClient.get(`/templates/${id}/athlete-zones`).then((r) => r.data),
+  getTemplateAlerts: (id: string) => apiClient.get(`/templates/${id}/alerts`).then((r) => r.data),
+  getWeekConflicts: (id: string, weekStart: string) =>
+    apiClient.get(`/templates/${id}/week-conflicts?week_start=${weekStart}`).then((r) => r.data),
   approveAll: (id: string, weekStart?: string) =>
     apiClient.post(`/templates/${id}/approve-all${weekStart ? `?week_start=${weekStart}` : ''}`).then((r) => r.data),
   deleteTemplate: (id: string) => apiClient.delete(`/templates/${id}`).then((r) => r.data),

@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { telemetryApi } from '../api/telemetry'
 import SportIcon, { SPORT_COLOR, SPORT_LABEL } from './SportIcon'
-import IntervalBar from './IntervalBar'
+import IntervalBar, { type HRZoneRange } from './IntervalBar'
 import WorkoutChartsModal, { type TimePoint } from './WorkoutChartsModal'
 import { ZONE_BADGE_COLOR, ZONE_HEX } from '../utils/zoneColors'
 import { calcPaceSpeed, PACE_TYPES } from '../utils/pace'
@@ -68,13 +68,22 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
+export interface WorkoutAlert {
+  id: string
+  severity: 'info' | 'warning' | 'critical'
+  rule_code: string
+  message: string
+}
+
 interface Props {
   workout: WorkoutDetail | null
   onClose: () => void
   onEdit?: () => void
+  hrZones?: Record<string, HRZoneRange>
+  alerts?: WorkoutAlert[]
 }
 
-export default function WorkoutDetailModal({ workout, onClose, onEdit }: Props) {
+export default function WorkoutDetailModal({ workout, onClose, onEdit, hrZones, alerts }: Props) {
   const [chartsOpen, setChartsOpen] = useState(false)
 
   const { data: telemetry } = useQuery<TelemetryData | null>({
@@ -199,7 +208,7 @@ export default function WorkoutDetailModal({ workout, onClose, onEdit }: Props) 
         {workout.interval_structure && workout.interval_structure.length > 0 && (
           <>
             <Divider label="Интервальная структура" labelPosition="left" mb="xs" mt="sm" />
-            <IntervalBar segments={workout.interval_structure} />
+            <IntervalBar segments={workout.interval_structure} hrZones={hrZones} />
           </>
         )}
 
@@ -295,6 +304,27 @@ export default function WorkoutDetailModal({ workout, onClose, onEdit }: Props) 
                 ) : null
               )}
             </Group>
+          </>
+        )}
+
+        {/* Alerts */}
+        {alerts && alerts.length > 0 && (
+          <>
+            <Divider label="Алерты" labelPosition="left" mb="xs" mt="sm" />
+            <Stack gap={4}>
+              {alerts.map((a) => {
+                const color = a.severity === 'critical' ? '#fa5252' : a.severity === 'warning' ? '#fd7e14' : '#228be6'
+                const icon  = a.severity === 'info' ? 'ℹ' : '⚠'
+                return (
+                  <Group key={a.id} gap={6} wrap="nowrap" align="flex-start"
+                    style={{ padding: '6px 8px', borderRadius: 6, background: `${color}18`, border: `1px solid ${color}40` }}
+                  >
+                    <Text size="xs" fw={700} style={{ color, flexShrink: 0, lineHeight: 1.6 }}>{icon} {a.rule_code}</Text>
+                    <Text size="xs" style={{ lineHeight: 1.5 }}>{a.message}</Text>
+                  </Group>
+                )
+              })}
+            </Stack>
           </>
         )}
 

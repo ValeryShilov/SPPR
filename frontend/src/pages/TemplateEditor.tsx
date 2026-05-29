@@ -464,7 +464,7 @@ export default function TemplateEditor() {
   })
 
   const adapt = useMutation({
-    mutationFn: () => plansApi.adaptTemplate(templateId!),
+    mutationFn: () => plansApi.adaptTemplateSync(templateId!),
     onSuccess: () => navigate(`/planning/${templateId}/matrix`),
   })
 
