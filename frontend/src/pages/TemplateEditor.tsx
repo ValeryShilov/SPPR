@@ -22,6 +22,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Fragment, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import PlanCalendar, { isoDate } from '../components/PlanCalendar'
+import PlanStepper from '../components/PlanStepper'
 import SportIcon from '../components/SportIcon'
 import IntervalBuilderComponent, { type Segment } from '../components/IntervalBuilder'
 import { groupsApi } from '../api/groups'
@@ -101,12 +102,8 @@ interface TrainingGroup { id: string; name: string }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const emptyDayWorkout = (): DayConfig => ({
-  workout_type: 'rest', workout_subtype: null, zone: 'Z1',
-  duration_min: 0, description: '', is_interval: false, segments: [],
-})
-
-const emptyDay = (): DayConfig[] => [emptyDayWorkout()]
+// Пустой день — без тренировок (свободный). «Отдых» задаётся явно через тип.
+const emptyDay = (): DayConfig[] => []
 
 const makeEmptySchedule = (n: number): DayConfig[][] =>
   Array.from({ length: n }, emptyDay)
@@ -339,40 +336,67 @@ export default function TemplateEditor() {
       })()
     : undefined
 
+  // Подсказка «кликни, чтобы добавить» для свободных дней
+  const plusHint = (
+    <Box mt={2} style={{ display: 'flex', justifyContent: 'center' }}>
+      <Text style={{ fontSize: 24, fontWeight: 700, color: '#868e96', lineHeight: 1 }}>+</Text>
+    </Box>
+  )
+
   const renderTemplateDay = (date: Date) => {
     const idx = getScheduleIdx(date)
-    if (idx < 0 || idx >= schedule.length) return null
+    if (idx < 0) return null
+    // День за пределами плана, но добавляемый — подсказка «+»
+    // (только ближайшие ~2 недели, чтобы не замусоривать календарь)
+    if (idx >= schedule.length) {
+      return idx >= schedule.length + 14 ? null : plusHint
+    }
     const dayWorkouts = schedule[idx]
-    const compact = dayWorkouts.length > 1
+    // Пустой день внутри плана — тоже свободный
+    if (dayWorkouts.length === 0) return plusHint
+
+    // Одна тренировка — детальная карточка
+    if (dayWorkouts.length === 1) {
+      const day = dayWorkouts[0]
+      if (day.workout_type === 'rest') {
+        return (
+          <Box mt={2}>
+            <SportIcon type="rest" size={26} color="#868e96" />
+            <Text size="xs" c="dimmed" style={{ lineHeight: 1.2 }}>Отдых</Text>
+          </Box>
+        )
+      }
+      return (
+        <Box mt={2}>
+          <SportIcon type={day.workout_type} size={26} color="#343a40" />
+          <Text size="xs" c="dimmed" style={{ lineHeight: 1.2 }}>
+            {day.zone} · {day.duration_min}м
+          </Text>
+          {day.is_interval && day.segments.length > 0 && (
+            <Text size="xs" c="blue" style={{ fontSize: 10 }}>интервал</Text>
+          )}
+        </Box>
+      )
+    }
+
+    // Несколько тренировок — сетка с переносом вправо и вниз.
+    // Размер обычный, пока помещается; уменьшается только при большом количестве.
+    const count = dayWorkouts.length
+    const iconSize = count <= 6 ? 24 : count <= 10 ? 18 : 14
     return (
-      <Box mt={2}>
-        {dayWorkouts.map((day, wi) => {
-          if (day.workout_type === 'rest') {
-            return (
-              <Box key={wi} mt={wi > 0 ? 1 : 0}>
-                <SportIcon type="rest" size={compact ? 20 : 26} color="#868e96" />
-                {!compact && <Text size="xs" c="dimmed" style={{ lineHeight: 1.2 }}>Отдых</Text>}
-              </Box>
-            )
-          }
-          return (
-            <Box key={wi} mt={wi > 0 ? 1 : 0}>
-              <SportIcon type={day.workout_type} size={compact ? 20 : 26} color="#343a40" />
-              {compact ? (
-                <Text size="xs" c="dimmed" style={{ fontSize: 9, lineHeight: 1.2 }}>{day.zone}</Text>
-              ) : (
-                <>
-                  <Text size="xs" c="dimmed" style={{ lineHeight: 1.2 }}>
-                    {day.zone} · {day.duration_min}м
-                  </Text>
-                  {day.is_interval && day.segments.length > 0 && (
-                    <Text size="xs" c="blue" style={{ fontSize: 10 }}>интервал</Text>
-                  )}
-                </>
-              )}
-            </Box>
-          )
-        })}
+      <Box mt={2} style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignContent: 'flex-start' }}>
+        {dayWorkouts.map((day, wi) => (
+          <Box key={wi} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: iconSize + 6 }}>
+            <SportIcon
+              type={day.workout_type === 'rest' ? 'rest' : day.workout_type}
+              size={iconSize}
+              color={day.workout_type === 'rest' ? '#868e96' : '#343a40'}
+            />
+            {day.workout_type !== 'rest' && iconSize >= 16 && (
+              <Text size="xs" c="dimmed" style={{ fontSize: 9, lineHeight: 1 }}>{day.zone}</Text>
+            )}
+          </Box>
+        ))}
       </Box>
     )
   }
@@ -386,10 +410,20 @@ export default function TemplateEditor() {
 
   const handleCalClick = (date: Date) => {
     const idx = getScheduleIdx(date)
-    if (idx >= 0 && idx < schedule.length) {
-      const iso = isoDate(date)
-      setSelDayStr((prev) => (prev === iso ? null : iso))
+    if (idx < 0) return                       // день раньше старта плана — игнорируем
+    // День за пределами плана — расширяем план до него (промежуточные дни = отдых)
+    if (idx >= schedule.length) {
+      if (idx > 364) return                   // разумный предел длительности
+      const newLen = idx + 1
+      setSchedule((prev) => {
+        const next = [...prev]
+        while (next.length < newLen) next.push(emptyDay())
+        return next
+      })
+      setDurationDays(newLen)
     }
+    const iso = isoDate(date)
+    setSelDayStr((prev) => (prev === iso ? null : iso))
   }
 
   const selIdx = selDayStr ? getScheduleIdx(new Date(selDayStr + 'T00:00:00')) : -1
@@ -421,9 +455,8 @@ export default function TemplateEditor() {
 
   const removeWorkoutFromDay = (dayIdx: number, workoutIdx: number) =>
     setSchedule((prev) => prev.map((dayWorkouts, i) =>
-      i === dayIdx && dayWorkouts.length > 1
-        ? dayWorkouts.filter((_, j) => j !== workoutIdx)
-        : dayWorkouts
+      // Удаление тренировки; если была последняя — день становится пустым (свободным)
+      i === dayIdx ? dayWorkouts.filter((_, j) => j !== workoutIdx) : dayWorkouts
     ))
 
   // ─── Копирование дней / недель ───────────────────────────────────────────────
@@ -529,10 +562,12 @@ export default function TemplateEditor() {
 
   return (
     <Container size="xl" py="sm">
-      <Group justify="space-between" mb="lg">
+      <Group justify="space-between" mb="md">
         <Title order={2}>Редактор шаблона</Title>
         <Button variant="light" onClick={() => navigate('/planning')}>← Назад</Button>
       </Group>
+
+      <PlanStepper current={1} templateId={templateId} />
 
       <Stack gap="lg">
         {/* Meta */}
@@ -724,7 +759,7 @@ export default function TemplateEditor() {
                           day={day}
                           onChange={updateDay}
                           onRemove={() => removeWorkoutFromDay(selIdx, wi)}
-                          canRemove={schedule[selIdx].length > 1}
+                          canRemove
                           label={getDayLabel(selIdx, startDate)}
                         />
                         {wi < schedule[selIdx].length - 1 && <Divider mt="xs" />}
@@ -787,7 +822,7 @@ export default function TemplateEditor() {
                             day={day}
                             onChange={updateDay}
                             onRemove={() => removeWorkoutFromDay(idx, wi)}
-                            canRemove={dayWorkouts.length > 1}
+                            canRemove
                             label={getDayLabel(idx, startDate)}
                           />
                           {wi < dayWorkouts.length - 1 && <Divider mt="xs" />}

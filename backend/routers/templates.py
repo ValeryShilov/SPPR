@@ -13,9 +13,10 @@ from backend.models.group import GroupMembership, TrainingGroup
 from backend.models.plan import IndividualWorkout, PlanTemplate
 from backend.models.telemetry import ActualTelemetry
 from backend.models.user import User
-from backend.models.athlete import AthleteProfile
+from backend.models.athlete import AthleteProfile, TrainingLoadHistory
 from backend.schemas.athlete import HRZonesResponse
 from backend.schemas.plan import (
+    AdaptationFactor,
     AdaptTaskResponse,
     GroupMemberRead,
     MatrixAlertRead,
@@ -27,7 +28,7 @@ from backend.schemas.plan import (
     WeekConflict,
 )
 from backend.services.analytics import adapt_template as adapt_template_sync_fn
-from backend.services.analytics import calculate_hr_zones
+from backend.services.analytics import calculate_hr_zones, _k_qual, _k_form
 from backend.tasks.planning import adapt_template_task
 
 router = APIRouter()
@@ -321,6 +322,7 @@ async def get_matrix(
             description=w.description,
             interval_structure=w.interval_structure,
             status=w.status,
+            created_at=w.created_at,
         )
         for w in workouts
     ]
@@ -350,6 +352,49 @@ async def get_group_members(
         GroupMemberRead(athlete_id=row.athlete_id, first_name=row.first_name, last_name=row.last_name)
         for row in result.all()
     ]
+
+
+@router.get("/{template_id}/adaptation-factors", response_model=list[AdaptationFactor])
+async def get_adaptation_factors(
+    template_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_coach),
+):
+    """Объяснение адаптации: по каждому атлету группы — квалификация → k_qual,
+    последний TSB → k_form. Делает алгоритм T = T_шаблона × k_qual × k_form прозрачным."""
+    tmpl = await _get_owned_template(template_id, db, current_user)
+
+    profiles_result = await db.execute(
+        select(AthleteProfile)
+        .join(GroupMembership, GroupMembership.athlete_id == AthleteProfile.id)
+        .where(
+            GroupMembership.group_id == tmpl.group_id,
+            GroupMembership.is_active.is_(True),
+        )
+        .order_by(AthleteProfile.last_name, AthleteProfile.first_name)
+    )
+    profiles = profiles_result.scalars().all()
+
+    factors: list[AdaptationFactor] = []
+    for p in profiles:
+        tlh_result = await db.execute(
+            select(TrainingLoadHistory.tsb)
+            .where(TrainingLoadHistory.athlete_id == p.id)
+            .order_by(TrainingLoadHistory.date.desc())
+            .limit(1)
+        )
+        tsb_row = tlh_result.scalar_one_or_none()
+        tsb = float(tsb_row) if tsb_row is not None else None
+        factors.append(AdaptationFactor(
+            athlete_id=p.id,
+            first_name=p.first_name,
+            last_name=p.last_name,
+            qualification=p.qualification,
+            k_qual=_k_qual(p.qualification),
+            tsb=tsb,
+            k_form=_k_form(tsb if tsb is not None else 0.0),
+        ))
+    return factors
 
 
 @router.get("/{template_id}/athlete-zones", response_model=list[HRZonesResponse])

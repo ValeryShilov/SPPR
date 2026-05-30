@@ -19,6 +19,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { plansApi } from '../api/plans'
+import PlanStepper from '../components/PlanStepper'
 import SportIcon, { SPORT_COLOR } from '../components/SportIcon'
 import WorkoutDetailModal from '../components/WorkoutDetailModal'
 import WorkoutFormModal, { type WorkoutFormData } from '../components/WorkoutFormModal'
@@ -43,6 +44,7 @@ interface MatrixWorkout {
   description: string | null
   interval_structure: IntervalSegment[] | null
   status: string
+  created_at: string
 }
 
 interface Template {
@@ -51,6 +53,17 @@ interface Template {
   start_date: string
   duration_days: number
   group_id: string
+  updated_at: string | null
+}
+
+interface AdaptationFactor {
+  athlete_id: string
+  first_name: string
+  last_name: string
+  qualification: string | null
+  k_qual: number
+  tsb: number | null
+  k_form: number
 }
 
 interface HRZoneEntry {
@@ -358,6 +371,12 @@ export default function Matrix() {
     enabled: !!templateId,
   })
 
+  const { data: factors = [] } = useQuery<AdaptationFactor[]>({
+    queryKey: ['matrix-factors', templateId],
+    queryFn: () => plansApi.getAdaptationFactors(templateId!),
+    enabled: !!templateId,
+  })
+
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['matrix', templateId] })
     queryClient.invalidateQueries({ queryKey: ['matrix-alerts', templateId] })
@@ -378,9 +397,21 @@ export default function Matrix() {
     onSuccess: () => {
       invalidate()
       queryClient.invalidateQueries({ queryKey: ['matrix-group-members', templateId] })
+      queryClient.invalidateQueries({ queryKey: ['matrix-factors', templateId] })
+      queryClient.invalidateQueries({ queryKey: ['template', templateId] })
     },
   })
 
+  const approveAllPlan = useMutation({
+    mutationFn: () => plansApi.approveAll(templateId!),
+    onSuccess: () => {
+      invalidate()
+      queryClient.invalidateQueries({ queryKey: ['templates'] })
+    },
+  })
+
+  const [approveAllChecking, setApproveAllChecking] = useState(false)
+  const [factorsOpen, setFactorsOpen] = useState(false)
 
   const handleApproveClick = async () => {
     setApproveChecking(true)
@@ -393,6 +424,24 @@ export default function Matrix() {
       }
     } finally {
       setApproveChecking(false)
+    }
+  }
+
+  const handleApproveAllClick = async () => {
+    if (!template) return
+    setApproveAllChecking(true)
+    try {
+      const starts = Array.from({ length: totalWeeks }, (_, w) =>
+        isoDate(getWeekDates(template.start_date, w)[0]))
+      const results = await Promise.all(starts.map((s) => plansApi.getWeekConflicts(templateId!, s)))
+      const conflicts = results.flat() as WeekConflict[]
+      if (conflicts.length === 0) {
+        approveAllPlan.mutate()
+      } else {
+        setConflictModal({ conflicts, weekStart: 'ALL' })
+      }
+    } finally {
+      setApproveAllChecking(false)
     }
   }
 
@@ -432,6 +481,17 @@ export default function Matrix() {
   const weekDraftCount = workouts.filter(
     (w) => w.status === 'draft' && weekDateStrs.includes(w.planned_date)
   ).length
+
+  // Всего черновиков в плане (для «Утвердить весь план»)
+  const totalDraftCount = workouts.filter((w) => w.status === 'draft').length
+
+  // Устаревание: шаблон изменён после генерации тренировок матрицы
+  const lastGenerated = workouts.reduce((mx, w) => (w.created_at > mx ? w.created_at : mx), '')
+  const isStale = !!template?.updated_at && !!lastGenerated && template.updated_at > lastGenerated
+
+  // Этап степпера: пока есть черновики — «Проверка» (3), всё опубликовано — «Утверждение» (4)
+  const allPublished = workouts.length > 0 && totalDraftCount === 0
+  const stepperCurrent = allPublished ? 4 : 3
 
   // HR zones map: athleteId → zone → {hr_min, hr_max}
   const hrZonesByAthlete = useMemo(() => {
@@ -555,6 +615,30 @@ export default function Matrix() {
         </Button>
       </Group>
 
+      <PlanStepper current={workouts.length === 0 ? 2 : stepperCurrent} templateId={templateId} />
+
+      {/* ── Баннер устаревания ───────────────────────────────────────────── */}
+      {isStale && (
+        <Alert color="yellow" mb="sm" p="sm">
+          <Group justify="space-between" wrap="nowrap" gap="sm">
+            <Stack gap={2}>
+              <Text size="sm" fw={600}>Шаблон изменён после расчёта</Text>
+              <Text size="xs" c="dimmed">
+                Матрица построена по старой версии шаблона. Пересчитайте, чтобы учесть изменения.
+              </Text>
+            </Stack>
+            <Button
+              size="xs"
+              color="yellow"
+              loading={adaptMutation.isPending}
+              onClick={() => adaptMutation.mutate()}
+            >
+              Пересчитать
+            </Button>
+          </Group>
+        </Alert>
+      )}
+
       {workouts.length === 0 ? (
         <Box
           p="xl"
@@ -609,6 +693,7 @@ export default function Matrix() {
               </Group>
               <Button
                 size="sm"
+                variant="light"
                 color="teal"
                 disabled={weekDraftCount === 0}
                 loading={approveWeek.isPending || approveChecking}
@@ -617,8 +702,76 @@ export default function Matrix() {
                 Утвердить неделю {clampedOffset + 1}
                 {weekDraftCount > 0 ? ` (${weekDraftCount})` : ''}
               </Button>
+              <Button
+                size="sm"
+                color="teal"
+                disabled={totalDraftCount === 0}
+                loading={approveAllPlan.isPending || approveAllChecking}
+                onClick={handleApproveAllClick}
+              >
+                Утвердить весь план{totalDraftCount > 0 ? ` (${totalDraftCount})` : ''}
+              </Button>
             </Group>
           </Group>
+
+          {/* ── Прозрачность адаптации ───────────────────────────────────── */}
+          {factors.length > 0 && (
+            <Box mb="sm">
+              <Button
+                size="xs" variant="subtle" color="gray"
+                onClick={() => setFactorsOpen((o) => !o)}
+              >
+                {factorsOpen ? '▲' : '▼'} Как рассчитана нагрузка (T = база × k_qual × k_form)
+              </Button>
+              <Collapse in={factorsOpen}>
+                <Box style={{ border: '1px solid #e9ecef', borderRadius: 8, overflow: 'hidden', marginTop: 4 }}>
+                  {/* Заголовок */}
+                  <Box style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1.6fr 1.4fr 1.4fr 0.8fr',
+                    gap: 8, padding: '6px 12px', background: '#f8f9fa',
+                  }}>
+                    <Text size="xs" fw={700} c="dimmed">Атлет</Text>
+                    <Text size="xs" fw={700} c="dimmed">Квалификация → k_qual</Text>
+                    <Text size="xs" fw={700} c="dimmed">TSB (форма) → k_form</Text>
+                    <Text size="xs" fw={700} c="dimmed" ta="right">Нагрузка</Text>
+                  </Box>
+                  {[...factors]
+                    .sort((a, b) => a.last_name.localeCompare(b.last_name, 'ru'))
+                    .map((f, i) => {
+                      const product = f.k_qual * f.k_form
+                      return (
+                        <Box key={f.athlete_id} style={{
+                          display: 'grid',
+                          gridTemplateColumns: '1.6fr 1.4fr 1.4fr 0.8fr',
+                          gap: 8, padding: '6px 12px', alignItems: 'center',
+                          borderTop: i === 0 ? 'none' : '1px solid #f1f3f5',
+                        }}>
+                          <Text size="sm" fw={500}>{f.last_name} {f.first_name}</Text>
+                          <Text size="sm" c="dimmed">
+                            {f.qualification || 'без разряда'} <b style={{ color: '#212529' }}>×{f.k_qual.toFixed(2)}</b>
+                          </Text>
+                          <Text size="sm" c="dimmed">
+                            {f.tsb != null ? `TSB ${f.tsb.toFixed(0)}` : 'нет данных'}{' '}
+                            <b style={{ color: '#212529' }}>×{f.k_form.toFixed(2)}</b>
+                          </Text>
+                          <Text size="sm" fw={700} ta="right"
+                            style={{ color: product > 1 ? '#2f9e44' : product < 1 ? '#e8590c' : '#495057' }}>
+                            ×{product.toFixed(2)}
+                          </Text>
+                        </Box>
+                      )
+                    })}
+                  <Box style={{ padding: '6px 12px', background: '#f8f9fa', borderTop: '1px solid #f1f3f5' }}>
+                    <Text size="xs" c="dimmed">
+                      Базовая длительность тренировки масштабируется на коэффициент нагрузки
+                      каждого атлета и ограничивается методическими лимитами зоны.
+                    </Text>
+                  </Box>
+                </Box>
+              </Collapse>
+            </Box>
+          )}
 
           {/* ── Group mismatch banner ────────────────────────────────────── */}
           {groupMismatch && (
@@ -905,9 +1058,10 @@ export default function Matrix() {
               </Button>
               <Button
                 color="teal"
-                loading={approveWeek.isPending}
+                loading={approveWeek.isPending || approveAllPlan.isPending}
                 onClick={() => {
-                  approveWeek.mutate(conflictModal.weekStart)
+                  if (conflictModal.weekStart === 'ALL') approveAllPlan.mutate()
+                  else approveWeek.mutate(conflictModal.weekStart)
                   setConflictModal(null)
                 }}
               >

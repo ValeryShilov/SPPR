@@ -26,13 +26,14 @@ class WeekDayConfig(BaseModel):
 
 class PlanTemplateRead(BaseModel):
     id: uuid.UUID
-    group_id: uuid.UUID
+    group_id: uuid.UUID | None
     name: str
     start_date: date
     duration_days: int
     target_intensity_pct: Decimal | None
     description: str | None
     week_schedule: list[Any] | None     # raw JSON — parsed on frontend
+    updated_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
@@ -144,6 +145,18 @@ class MatrixWorkout(BaseModel):
     description: str | None
     interval_structure: list[Any] | None
     status: str
+    created_at: datetime
+
+
+class AdaptationFactor(BaseModel):
+    """Объяснение адаптации для одного атлета: входы (квалификация, TSB) и коэффициенты."""
+    athlete_id: uuid.UUID
+    first_name: str
+    last_name: str
+    qualification: str | None
+    k_qual: float
+    tsb: float | None
+    k_form: float
 
 
 class GroupMemberRead(BaseModel):

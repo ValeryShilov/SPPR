@@ -23,6 +23,9 @@ class PlanTemplate(Base):
     description: Mapped[str | None] = mapped_column(Text)
     week_schedule: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     group: Mapped["TrainingGroup"] = relationship(back_populates="plan_templates")
     individual_workouts: Mapped[list["IndividualWorkout"]] = relationship(back_populates="template")

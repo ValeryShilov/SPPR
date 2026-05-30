@@ -12,6 +12,7 @@ export const plansApi = {
   getGroupMembers: (id: string) => apiClient.get(`/templates/${id}/group-members`).then((r) => r.data),
   getAthleteZones: (id: string) => apiClient.get(`/templates/${id}/athlete-zones`).then((r) => r.data),
   getTemplateAlerts: (id: string) => apiClient.get(`/templates/${id}/alerts`).then((r) => r.data),
+  getAdaptationFactors: (id: string) => apiClient.get(`/templates/${id}/adaptation-factors`).then((r) => r.data),
   getWeekConflicts: (id: string, weekStart: string) =>
     apiClient.get(`/templates/${id}/week-conflicts?week_start=${weekStart}`).then((r) => r.data),
   approveAll: (id: string, weekStart?: string) =>
