@@ -1,0 +1,44 @@
+# ─── Секреты и окружение ──────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# .env.example остаётся в репозитории как шаблон
+!.env.example
+
+# ─── Python ───────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# ─── Node / Frontend ──────────────────────────────────────────────────
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+
+# ─── Логи и временные файлы ───────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─── Загрузки телеметрии (хранятся в docker-томе, не в репозитории) ────
+uploads/
+
+# ─── ОС / редакторы ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+*.swp

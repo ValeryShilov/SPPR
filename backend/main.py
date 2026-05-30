@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.routers import analytics, athletes, auth, groups, markers, metrics, settings, templates, telemetry, users, workouts
+from backend.core.config import settings
+from backend.routers import analytics, athletes, auth, groups, markers, metrics, settings as settings_router, templates, telemetry, users, workouts
 
 app = FastAPI(
     title="СППР — Система поддержки принятия решений",
@@ -11,7 +12,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -27,7 +28,7 @@ app.include_router(workouts.router, prefix="/api/v1/workouts", tags=["workouts"]
 app.include_router(telemetry.router, prefix="/api/v1", tags=["telemetry"])
 app.include_router(metrics.router, prefix="/api/v1/metrics", tags=["metrics"])
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["analytics"])
-app.include_router(settings.router, prefix="/api/v1/settings", tags=["settings"])
+app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["settings"])
 
 
 @app.get("/health")
