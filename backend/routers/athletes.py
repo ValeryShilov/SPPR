@@ -2,7 +2,7 @@ import uuid
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.auth import get_current_user
@@ -28,9 +28,18 @@ router = APIRouter()
 
 
 async def _get_accessible_profile(
-    athlete_id: uuid.UUID, db: AsyncSession, current_user: User
+    athlete_id: uuid.UUID,
+    db: AsyncSession,
+    current_user: User,
+    require_manage: bool = False,
 ) -> AthleteProfile:
-    """Возвращает профиль атлета если у current_user есть право на просмотр."""
+    """Возвращает профиль атлета если у current_user есть право на доступ.
+
+    require_manage=False (по умолчанию) — просмотр: любой тренер может смотреть
+        любого атлета (общий ростер; список атлетов и так виден всем тренерам).
+    require_manage=True — управление (редактирование профиля, маркеры): только
+        свои атлеты — по прямой привязке coach_user_id или членству в группе тренера.
+    """
     profile = await db.get(AthleteProfile, athlete_id)
     if not profile:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Профиль атлета не найден")
@@ -40,10 +49,12 @@ async def _get_accessible_profile(
     if profile.user_id == current_user.id:
         return profile
     if current_user.role == "coach":
-        # доступ через прямую привязку тренера
+        # Просмотр открыт любому тренеру
+        if not require_manage:
+            return profile
+        # Управление — только прямая привязка или членство в группе тренера
         if profile.coach_user_id == current_user.id:
             return profile
-        # доступ через членство в группе тренера
         result = await db.execute(
             select(GroupMembership)
             .join(TrainingGroup, GroupMembership.group_id == TrainingGroup.id)
@@ -139,7 +150,7 @@ async def update_athlete(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    profile = await _get_accessible_profile(athlete_id, db, current_user)
+    profile = await _get_accessible_profile(athlete_id, db, current_user, require_manage=True)
     # атлет не может изменить чужой профиль
     if current_user.role == "athlete" and profile.user_id != current_user.id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Нельзя редактировать чужой профиль")
@@ -191,6 +202,69 @@ async def unbind_coach(
     return profile
 
 
+@router.delete("/{athlete_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_or_deactivate_athlete(
+    athlete_id: uuid.UUID,
+    action: str = "remove",  # "remove" | "deactivate"
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    action=remove   — убрать атлета из всех групп тренера и снять привязку coach_user_id.
+                      Аккаунт и данные сохраняются.
+    action=deactivate — то же + users.is_active = false (атлет не сможет войти).
+    """
+    if current_user.role not in ("coach", "admin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Только тренер может удалять атлетов")
+    if action not in ("remove", "deactivate"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "action должен быть remove или deactivate")
+
+    profile = await db.get(AthleteProfile, athlete_id)
+    if not profile:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Атлет не найден")
+
+    # Тренер может управлять только своими атлетами
+    if current_user.role == "coach":
+        is_own = profile.coach_user_id == current_user.id
+        if not is_own:
+            # Проверяем членство хотя бы в одной группе тренера
+            result = await db.execute(
+                select(GroupMembership)
+                .join(TrainingGroup, GroupMembership.group_id == TrainingGroup.id)
+                .where(
+                    GroupMembership.athlete_id == athlete_id,
+                    GroupMembership.is_active == True,
+                    TrainingGroup.coach_user_id == current_user.id,
+                )
+            )
+            if result.scalar_one_or_none() is None:
+                raise HTTPException(status.HTTP_403_FORBIDDEN, "Атлет не относится к вашим группам")
+
+    # Убираем из всех активных групп тренера
+    await db.execute(
+        update(GroupMembership)
+        .where(
+            GroupMembership.athlete_id == athlete_id,
+            GroupMembership.is_active == True,
+            GroupMembership.group_id.in_(
+                select(TrainingGroup.id).where(TrainingGroup.coach_user_id == current_user.id)
+            ),
+        )
+        .values(is_active=False)
+    )
+
+    # Снимаем привязку тренера
+    if profile.coach_user_id == current_user.id:
+        profile.coach_user_id = None
+
+    if action == "deactivate":
+        user = await db.get(User, profile.user_id)
+        if user:
+            user.is_active = False
+
+    await db.commit()
+
+
 # ── Физиологические маркеры атлета ────────────────────────────────────────────
 
 @router.get("/{athlete_id}/markers", response_model=list[PhysiologicalMarkerRead])
@@ -216,7 +290,7 @@ async def create_marker(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    await _get_accessible_profile(athlete_id, db, current_user)
+    await _get_accessible_profile(athlete_id, db, current_user, require_manage=True)
 
     marker = PhysiologicalMarker(athlete_id=athlete_id, **data.model_dump())
     db.add(marker)

@@ -164,10 +164,12 @@ function GroupCard({
   groupId,
   groupName,
   athletes,
+  onDelete,
 }: {
   groupId: string
   groupName: string
   athletes: CoachAthlete[]
+  onDelete: () => void
 }) {
   const navigate = useNavigate()
 
@@ -248,6 +250,11 @@ function GroupCard({
         >
           Управление
         </Button>
+        <Tooltip label="Удалить группу" withArrow>
+          <Button size="xs" variant="subtle" color="red" px={6} onClick={onDelete}>
+            ✕
+          </Button>
+        </Tooltip>
       </Group>
     </Card>
   )
@@ -372,6 +379,31 @@ export default function AthletesPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['coach-athletes'] }),
   })
 
+  // ── Delete athlete ────────────────────────────────────────────────────────
+  const [deleteAthleteModal, setDeleteAthleteModal] = useState<{ athleteId: string; name: string } | null>(null)
+  const [deleteAthleteAction, setDeleteAthleteAction] = useState<'remove' | 'deactivate'>('remove')
+
+  const deleteAthlete = useMutation({
+    mutationFn: ({ id, action }: { id: string; action: 'remove' | 'deactivate' }) =>
+      action === 'remove' ? athletesApi.removeAthlete(id) : athletesApi.deactivateAthlete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['coach-athletes'] })
+      setDeleteAthleteModal(null)
+    },
+  })
+
+  // ── Delete group ──────────────────────────────────────────────────────────
+  const [deleteGroupModal, setDeleteGroupModal] = useState<{ groupId: string; name: string } | null>(null)
+
+  const deleteGroup = useMutation({
+    mutationFn: (groupId: string) => groupsApi.deleteGroup(groupId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['groups'] })
+      queryClient.invalidateQueries({ queryKey: ['coach-athletes'] })
+      setDeleteGroupModal(null)
+    },
+  })
+
   // All unique groups from athletes list
   const allGroups = useMemo(() => {
     const map = new Map<string, string>()
@@ -483,6 +515,83 @@ export default function AthletesPage() {
       </Modal>
 
       <ClusterWizard opened={clusterOpen} onClose={() => setClusterOpen(false)} />
+
+      {/* ── Delete athlete modal ── */}
+      <Modal
+        opened={!!deleteAthleteModal}
+        onClose={() => setDeleteAthleteModal(null)}
+        title={<Text fw={600}>Удалить атлета</Text>}
+        size="sm"
+      >
+        {deleteAthleteModal && (
+          <Stack gap="md">
+            <Text size="sm">Что сделать с атлетом <b>{deleteAthleteModal.name}</b>?</Text>
+            <Stack gap="xs">
+              <Box
+                style={{
+                  padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
+                  border: `2px solid ${deleteAthleteAction === 'remove' ? '#228be6' : '#dee2e6'}`,
+                  background: deleteAthleteAction === 'remove' ? '#e7f5ff' : '#fff',
+                }}
+                onClick={() => setDeleteAthleteAction('remove')}
+              >
+                <Text size="sm" fw={600}>Убрать из групп</Text>
+                <Text size="xs" c="dimmed">Атлет покидает все ваши группы, привязка снимается. Аккаунт и данные сохраняются, атлет может войти в систему.</Text>
+              </Box>
+              <Box
+                style={{
+                  padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
+                  border: `2px solid ${deleteAthleteAction === 'deactivate' ? '#f03e3e' : '#dee2e6'}`,
+                  background: deleteAthleteAction === 'deactivate' ? '#fff5f5' : '#fff',
+                }}
+                onClick={() => setDeleteAthleteAction('deactivate')}
+              >
+                <Text size="sm" fw={600}>Деактивировать аккаунт</Text>
+                <Text size="xs" c="dimmed">То же + аккаунт блокируется, атлет не сможет войти. Все данные сохраняются. Можно восстановить через администратора.</Text>
+              </Box>
+            </Stack>
+            <Group justify="flex-end" gap="sm" mt="xs">
+              <Button variant="default" onClick={() => setDeleteAthleteModal(null)}>Отмена</Button>
+              <Button
+                color={deleteAthleteAction === 'deactivate' ? 'red' : 'orange'}
+                loading={deleteAthlete.isPending}
+                onClick={() => deleteAthlete.mutate({ id: deleteAthleteModal.athleteId, action: deleteAthleteAction })}
+              >
+                {deleteAthleteAction === 'deactivate' ? 'Деактивировать' : 'Убрать из групп'}
+              </Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
+
+      {/* ── Delete group modal ── */}
+      <Modal
+        opened={!!deleteGroupModal}
+        onClose={() => setDeleteGroupModal(null)}
+        title={<Text fw={600}>Удалить группу</Text>}
+        size="sm"
+      >
+        {deleteGroupModal && (
+          <Stack gap="md">
+            <Text size="sm">
+              Удалить группу <b>{deleteGroupModal.name}</b>?
+            </Text>
+            <Alert color="yellow" variant="light">
+              <Text size="xs">Шаблоны тренировок, привязанные к этой группе, останутся в системе без группы. Атлеты не потеряют свои данные.</Text>
+            </Alert>
+            <Group justify="flex-end" gap="sm">
+              <Button variant="default" onClick={() => setDeleteGroupModal(null)}>Отмена</Button>
+              <Button
+                color="red"
+                loading={deleteGroup.isPending}
+                onClick={() => deleteGroup.mutate(deleteGroupModal.groupId)}
+              >
+                Удалить группу
+              </Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
 
       <Modal opened={createOpen} onClose={handleCreateClose} title="Новая группа">
         <Stack gap="sm">
@@ -662,28 +771,44 @@ export default function AthletesPage() {
                         )}
                       </Table.Td>
                       <Table.Td onClick={e => e.stopPropagation()}>
-                        {isOtherCoach ? (
-                          <Tooltip label={`Тренер: ${coachById.get(a.coach_user_id!) ?? '—'}`} withArrow>
-                            <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
-                              {coachById.get(a.coach_user_id!) ?? '—'}
-                            </Text>
-                          </Tooltip>
-                        ) : (
-                          <Tooltip label={isMyAthlete ? 'Отвязать от себя' : 'Привязать к себе'} withArrow>
+                        <Group gap={4} wrap="nowrap">
+                          {isOtherCoach ? (
+                            <Tooltip label={`Тренер: ${coachById.get(a.coach_user_id!) ?? '—'}`} withArrow>
+                              <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+                                {coachById.get(a.coach_user_id!) ?? '—'}
+                              </Text>
+                            </Tooltip>
+                          ) : (
+                            <Tooltip label={isMyAthlete ? 'Отвязать от себя' : 'Привязать к себе'} withArrow>
+                              <Button
+                                size="xs"
+                                variant={isMyAthlete ? 'filled' : 'light'}
+                                color={isMyAthlete ? 'red' : 'blue'}
+                                loading={isBusy}
+                                onClick={() => bindCoach.mutate({
+                                  athleteProfileId: a.athlete_id,
+                                  bind: !isMyAthlete,
+                                })}
+                              >
+                                {isMyAthlete ? 'Отвязать' : 'Привязать'}
+                              </Button>
+                            </Tooltip>
+                          )}
+                          <Tooltip label="Удалить атлета" withArrow>
                             <Button
                               size="xs"
-                              variant={isMyAthlete ? 'filled' : 'light'}
-                              color={isMyAthlete ? 'red' : 'blue'}
-                              loading={isBusy}
-                              onClick={() => bindCoach.mutate({
-                                athleteProfileId: a.athlete_id,
-                                bind: !isMyAthlete,
-                              })}
+                              variant="subtle"
+                              color="red"
+                              px={6}
+                              onClick={() => {
+                                setDeleteAthleteAction('remove')
+                                setDeleteAthleteModal({ athleteId: a.athlete_id, name: a.full_name })
+                              }}
                             >
-                              {isMyAthlete ? 'Отвязать' : 'Привязать'}
+                              ✕
                             </Button>
                           </Tooltip>
-                        )}
+                        </Group>
                       </Table.Td>
                     </Table.Tr>
                   )})}
@@ -716,6 +841,7 @@ export default function AthletesPage() {
                   groupId={g.id}
                   groupName={g.name}
                   athletes={athletesByGroup.get(g.id) ?? []}
+                  onDelete={() => setDeleteGroupModal({ groupId: g.id, name: g.name })}
                 />
               ))}
             </SimpleGrid>

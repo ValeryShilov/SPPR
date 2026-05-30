@@ -45,8 +45,15 @@ async def _require_athlete_access(
     athlete_id: uuid.UUID,
     db: AsyncSession,
     current_user: User,
+    require_manage: bool = False,
 ) -> AthleteProfile:
-    """Проверяет право доступа к данным атлета и возвращает его профиль."""
+    """Проверяет право доступа к данным атлета и возвращает его профиль.
+
+    require_manage=False (по умолчанию) — просмотр аналитики: любой тренер
+        может смотреть данные любого атлета (общий ростер).
+    require_manage=True — управление (например, закрытие алерта): только свои
+        атлеты — по прямой привязке или членству в группе тренера.
+    """
     profile = await db.get(AthleteProfile, athlete_id)
     if profile is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Атлет не найден")
@@ -59,17 +66,26 @@ async def _require_athlete_access(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
         return profile
 
-    # coach — атлет должен быть в одной из его групп
+    # coach
+    if not require_manage:
+        return profile
+
+    if profile.coach_user_id == current_user.id:
+        return profile
+
+    # .limit(1).first() — атлет может состоять в нескольких группах тренера,
+    # поэтому scalar_one_or_none() здесь дал бы MultipleResultsFound
     result = await db.execute(
-        select(GroupMembership)
+        select(GroupMembership.id)
         .join(TrainingGroup, GroupMembership.group_id == TrainingGroup.id)
         .where(
             GroupMembership.athlete_id == athlete_id,
             GroupMembership.is_active.is_(True),
             TrainingGroup.coach_user_id == current_user.id,
         )
+        .limit(1)
     )
-    if result.scalar_one_or_none() is None:
+    if result.first() is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
     return profile
 
@@ -313,8 +329,8 @@ async def resolve_alert(
     if alert is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Алерт не найден")
 
-    # Атлет может закрыть только свой алерт; тренер — атлета из своей группы
-    await _require_athlete_access(alert.athlete_id, db, current_user)
+    # Атлет может закрыть только свой алерт; тренер — атлета из своей группы/привязки
+    await _require_athlete_access(alert.athlete_id, db, current_user, require_manage=True)
 
     alert.is_resolved = True
     await db.commit()
