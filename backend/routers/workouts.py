@@ -35,17 +35,19 @@ async def _get_accessible_workout(
             if group is None or group.coach_user_id != current_user.id:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
         else:
-            # Тренировка создана вручную — проверяем, что атлет входит в группу тренера
+            # Тренировка создана вручную — проверяем, что атлет входит в группу тренера.
+            # .limit(1).first(): атлет может состоять в нескольких группах тренера.
             result = await db.execute(
-                select(GroupMembership)
+                select(GroupMembership.id)
                 .join(TrainingGroup, GroupMembership.group_id == TrainingGroup.id)
                 .where(
                     GroupMembership.athlete_id == workout.athlete_id,
                     GroupMembership.is_active == True,
                     TrainingGroup.coach_user_id == current_user.id,
                 )
+                .limit(1)
             )
-            if result.scalar_one_or_none() is None:
+            if result.first() is None:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
         return workout
 
@@ -156,17 +158,19 @@ async def create_workout(
     if athlete is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Атлет не найден")
 
-    # Проверяем, что атлет входит в группу данного тренера
+    # Проверяем, что атлет входит в группу данного тренера.
+    # .limit(1).first(): атлет может состоять в нескольких группах тренера.
     result = await db.execute(
-        select(GroupMembership)
+        select(GroupMembership.id)
         .join(TrainingGroup, GroupMembership.group_id == TrainingGroup.id)
         .where(
             GroupMembership.athlete_id == data.athlete_id,
             GroupMembership.is_active == True,
             TrainingGroup.coach_user_id == current_user.id,
         )
+        .limit(1)
     )
-    if result.scalar_one_or_none() is None:
+    if result.first() is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Атлет не входит в группу тренера")
 
     workout = IndividualWorkout(

@@ -29,16 +29,18 @@ async def _get_accessible_marker(
         return marker
 
     if current_user.role == "coach":
+        # .limit(1).first(): атлет может состоять в нескольких группах тренера.
         result = await db.execute(
-            select(GroupMembership)
+            select(GroupMembership.id)
             .join(TrainingGroup, GroupMembership.group_id == TrainingGroup.id)
             .where(
                 GroupMembership.athlete_id == marker.athlete_id,
                 GroupMembership.is_active == True,
                 TrainingGroup.coach_user_id == current_user.id,
             )
+            .limit(1)
         )
-        if result.scalar_one_or_none():
+        if result.first():
             return marker
 
     raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа к маркеру")

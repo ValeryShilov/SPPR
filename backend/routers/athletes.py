@@ -227,17 +227,19 @@ async def remove_or_deactivate_athlete(
     if current_user.role == "coach":
         is_own = profile.coach_user_id == current_user.id
         if not is_own:
-            # Проверяем членство хотя бы в одной группе тренера
+            # Членство хотя бы в одной группе тренера.
+            # .limit(1).first(): атлет может состоять в нескольких группах тренера.
             result = await db.execute(
-                select(GroupMembership)
+                select(GroupMembership.id)
                 .join(TrainingGroup, GroupMembership.group_id == TrainingGroup.id)
                 .where(
                     GroupMembership.athlete_id == athlete_id,
                     GroupMembership.is_active == True,
                     TrainingGroup.coach_user_id == current_user.id,
                 )
+                .limit(1)
             )
-            if result.scalar_one_or_none() is None:
+            if result.first() is None:
                 raise HTTPException(status.HTTP_403_FORBIDDEN, "Атлет не относится к вашим группам")
 
     # Убираем из всех активных групп тренера
@@ -389,12 +391,9 @@ async def get_upcoming(
             IndividualWorkout.status.in_(["draft", "published"]),
             IndividualWorkout.planned_date >= today,
         )
-        .order_by(IndividualWorkout.planned_date)
+        .order_by(IndividualWorkout.planned_date, IndividualWorkout.created_at)
     )
-    workouts = result.scalars().all()
-    # Дедупликация: самая свежая запись на дату
-    seen: dict = {}
-    for w in workouts:
-        if w.planned_date not in seen:
-            seen[w.planned_date] = w
-    return list(seen.values())
+    # Без дедупликации: у атлета может быть несколько тренировок в один день
+    # (несколько в дне одного шаблона или наложение разных шаблонов/групп).
+    # Статус каждой (черновик/опубликовано) показывается на фронте.
+    return list(result.scalars().all())
