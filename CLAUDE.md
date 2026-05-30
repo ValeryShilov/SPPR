@@ -16,11 +16,11 @@
 - coach (тренер) — планирование, просмотр аналитики, утверждение планов
 - athlete (спортсмен) — просмотр плана, ввод метрик, загрузка телеметрии
 
-## Ключевые сущности БД (11 таблиц)
+## Ключевые сущности БД (12 таблиц)
 users, athlete_profiles, training_groups, group_memberships,
 physiological_markers, plan_templates, individual_workouts,
 actual_telemetry, subjective_metrics, training_load_history,
-diagnostic_alerts
+diagnostic_alerts, alert_settings (singleton порогов алертов)
 
 ## Алгоритмы аналитического ядра
 - Расчёт зон ЧСС по шкале Olympiatoppen (5 зон, % от ЧССmax)

@@ -8,6 +8,17 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
+    # Разрешённые источники CORS (через запятую). По умолчанию — дев-сервер Vite.
+    CORS_ORIGINS: str = "http://localhost:3000"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """CORS_ORIGINS как список; '*' оставляет доступ открытым."""
+        raw = self.CORS_ORIGINS.strip()
+        if raw == "*":
+            return ["*"]
+        return [o.strip() for o in raw.split(",") if o.strip()]
+
     # Пороги алертов (настраиваемые тренером)
     ALERT_OVERLOAD_TSB_THRESHOLD: float = -30.0
     ALERT_OVERLOAD_RESTING_HR_PCT: float = 7.0

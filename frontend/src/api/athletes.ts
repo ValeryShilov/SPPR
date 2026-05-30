@@ -22,4 +22,9 @@ export const athletesApi = {
     apiClient.post(`/athletes/${athleteProfileId}/bind-coach`).then((r) => r.data),
   unbindCoach: (athleteProfileId: string) =>
     apiClient.delete(`/athletes/${athleteProfileId}/bind-coach`).then((r) => r.data),
+
+  removeAthlete: (id: string) =>
+    apiClient.delete(`/athletes/${id}?action=remove`),
+  deactivateAthlete: (id: string) =>
+    apiClient.delete(`/athletes/${id}?action=deactivate`),
 }

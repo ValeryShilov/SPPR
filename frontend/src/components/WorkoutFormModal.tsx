@@ -102,7 +102,7 @@ export default function WorkoutFormModal({
   const isCyclic  = CYCLIC_TYPES.has(wType)
   const hasSubski = wType === 'ski' || wType === 'skiroll'
 
-  const intervalDur = segments.reduce((s, seg) => s + seg.duration_min * seg.repeats, 0)
+  const intervalDur = segments.reduce((s, seg) => s + (seg.duration_min ?? 0) * seg.repeats, 0)
   const derivedZone = segments.find((s) => s.seg_type === 'work')?.zone ?? null
 
   const createMut = useMutation({

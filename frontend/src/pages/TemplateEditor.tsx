@@ -7,6 +7,7 @@ import {
   Container,
   Divider,
   Group,
+  Menu,
   NumberInput,
   Paper,
   SegmentedControl,
@@ -109,6 +110,13 @@ const emptyDay = (): DayConfig[] => [emptyDayWorkout()]
 
 const makeEmptySchedule = (n: number): DayConfig[][] =>
   Array.from({ length: n }, emptyDay)
+
+// Глубокое клонирование дня с новыми _id сегментов (иначе коллизия React-ключей)
+const cloneSegments = (segs: Segment[]): Segment[] =>
+  segs.map((s) => ({ ...s, _id: crypto.randomUUID() }))
+
+const cloneDayWorkouts = (day: DayConfig[]): DayConfig[] =>
+  day.map((w) => ({ ...w, segments: cloneSegments(w.segments) }))
 
 function parseSingleWorkout(d: Record<string, unknown>): DayConfig {
   const segs = ((d.interval_structure as Record<string, unknown>[] | null) ?? []).map((s) => ({
@@ -418,6 +426,54 @@ export default function TemplateEditor() {
         : dayWorkouts
     ))
 
+  // ─── Копирование дней / недель ───────────────────────────────────────────────
+  const [copyOpen, setCopyOpen]       = useState(false)
+  const [copyMode, setCopyMode]       = useState<'week' | 'range'>('week')
+  const [copySrcWeek, setCopySrcWeek] = useState(0)
+  const [copyDstWeek, setCopyDstWeek] = useState<string>('end')   // индекс недели или 'end'
+  const [copyFrom, setCopyFrom]       = useState<number | string>(1)
+  const [copyTo, setCopyTo]           = useState<number | string>(1)
+  const [copyDstDay, setCopyDstDay]   = useState<number | string>(1)
+  const [copyToEnd, setCopyToEnd]     = useState(true)
+
+  const weekCount = Math.ceil(schedule.length / 7)
+
+  /**
+   * Копирует srcCount дней начиная с srcStart в позицию targetStart.
+   * При нехватке длины расписание расширяется днями отдыха.
+   * Целевые дни перезаписываются. Длительность синхронизируется.
+   */
+  const copyDays = (srcStart: number, srcCount: number, targetStart: number) => {
+    if (srcCount <= 0 || srcStart < 0) return
+    setSchedule((prev) => {
+      const srcSlice = prev.slice(srcStart, srcStart + srcCount).map(cloneDayWorkouts)
+      const needLen  = Math.max(prev.length, targetStart + srcSlice.length)
+      const next     = [...prev]
+      while (next.length < needLen) next.push(emptyDay())
+      srcSlice.forEach((d, i) => { next[targetStart + i] = d })
+      return next
+    })
+    const newLen = Math.max(schedule.length, targetStart + srcCount)
+    if (newLen !== schedule.length) {
+      setDurationDays(newLen)
+      setCalView(newLen <= 7 ? 'week' : 'month')
+    }
+  }
+
+  const handleCopy = () => {
+    if (copyMode === 'week') {
+      const srcStart    = copySrcWeek * 7
+      const srcCount    = Math.min(7, schedule.length - srcStart)
+      const targetStart = copyDstWeek === 'end' ? schedule.length : Number(copyDstWeek) * 7
+      copyDays(srcStart, srcCount, targetStart)
+    } else {
+      const from = Math.max(1, Math.min(schedule.length, Number(copyFrom) || 1))
+      const to   = Math.max(from, Math.min(schedule.length, Number(copyTo) || from))
+      const targetStart = copyToEnd ? schedule.length : Math.max(0, (Number(copyDstDay) || 1) - 1)
+      copyDays(from - 1, to - from + 1, targetStart)
+    }
+  }
+
   // ─── Summary stats ─────────────────────────────────────────────────────────
   let totalMin = 0
   const zoneMins: Record<string, number> = { Z1: 0, Z2: 0, Z3: 0, Z4: 0, Z5: 0 }
@@ -517,18 +573,99 @@ export default function TemplateEditor() {
           <Group justify="space-between" mb="sm">
             <Group gap="sm">
               <Title order={4}>Расписание тренировок</Title>
-              <Text size="sm" c="dimmed">{schedule.length} дн. · {Math.ceil(schedule.length / 7)} нед.</Text>
+              <Text size="sm" c="dimmed">{schedule.length} дн. · {weekCount} нед.</Text>
             </Group>
-            <SegmentedControl
-              size="xs"
-              value={showCalendar ? 'cal' : 'list'}
-              onChange={(v) => { setShowCalendar(v === 'cal'); setSelDayStr(null) }}
-              data={[
-                { value: 'cal',  label: 'Календарь' },
-                { value: 'list', label: 'Список'    },
-              ]}
-            />
+            <Group gap="sm">
+              {schedule.length > 0 && (
+                <Button
+                  size="xs"
+                  variant={copyOpen ? 'filled' : 'light'}
+                  onClick={() => setCopyOpen((o) => !o)}
+                >
+                  Копировать дни/недели
+                </Button>
+              )}
+              <SegmentedControl
+                size="xs"
+                value={showCalendar ? 'cal' : 'list'}
+                onChange={(v) => { setShowCalendar(v === 'cal'); setSelDayStr(null) }}
+                data={[
+                  { value: 'cal',  label: 'Календарь' },
+                  { value: 'list', label: 'Список'    },
+                ]}
+              />
+            </Group>
           </Group>
+
+          {/* Панель копирования */}
+          <Collapse in={copyOpen && schedule.length > 0}>
+            <Paper withBorder p="sm" radius="sm" mb="sm" bg="blue.0">
+              <Group align="flex-end" gap="sm" wrap="wrap">
+                <SegmentedControl
+                  size="xs"
+                  value={copyMode}
+                  onChange={(v) => setCopyMode(v as 'week' | 'range')}
+                  data={[
+                    { value: 'week',  label: 'Неделю' },
+                    { value: 'range', label: 'Дни'    },
+                  ]}
+                />
+
+                {copyMode === 'week' ? (
+                  <>
+                    <Select
+                      size="xs" label="Источник" w={130} allowDeselect={false}
+                      data={Array.from({ length: weekCount }, (_, i) => ({
+                        value: String(i), label: `Неделя ${i + 1}`,
+                      }))}
+                      value={String(Math.min(copySrcWeek, Math.max(0, weekCount - 1)))}
+                      onChange={(v) => setCopySrcWeek(Number(v) || 0)}
+                    />
+                    <Text size="xs" c="dimmed" mb={6}>→</Text>
+                    <Select
+                      size="xs" label="Куда" w={190} allowDeselect={false}
+                      data={[
+                        ...Array.from({ length: weekCount }, (_, i) => ({
+                          value: String(i), label: `Заменить неделю ${i + 1}`,
+                        })),
+                        { value: 'end', label: 'Новая неделя в конце' },
+                      ]}
+                      value={copyDstWeek}
+                      onChange={(v) => setCopyDstWeek(v ?? 'end')}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <NumberInput
+                      size="xs" label="С дня" w={85} min={1} max={schedule.length}
+                      value={copyFrom} onChange={setCopyFrom}
+                    />
+                    <NumberInput
+                      size="xs" label="По день" w={85} min={1} max={schedule.length}
+                      value={copyTo} onChange={setCopyTo}
+                    />
+                    <Text size="xs" c="dimmed" mb={6}>→</Text>
+                    <Checkbox
+                      label="В конец" checked={copyToEnd} size="xs" mb={8}
+                      onChange={(e) => setCopyToEnd(e.currentTarget.checked)}
+                    />
+                    {!copyToEnd && (
+                      <NumberInput
+                        size="xs" label="Вставить с дня" w={120} min={1}
+                        value={copyDstDay} onChange={setCopyDstDay}
+                      />
+                    )}
+                  </>
+                )}
+
+                <Button size="xs" onClick={handleCopy}>Скопировать</Button>
+              </Group>
+              <Text size="xs" c="dimmed" mt={6}>
+                Тренировки в целевых днях будут заменены. Изменения вступят в силу
+                после сохранения шаблона.
+              </Text>
+            </Paper>
+          </Collapse>
 
           {showCalendar ? (
             <Stack gap="sm">
@@ -549,7 +686,29 @@ export default function TemplateEditor() {
                 <Paper withBorder p="sm" radius="sm">
                   <Group justify="space-between" mb="xs">
                     <Text fw={600}>{getDayLabel(selIdx, startDate)}</Text>
-                    <Button size="xs" variant="subtle" color="gray" onClick={() => setSelDayStr(null)}>✕</Button>
+                    <Group gap="xs">
+                      <Menu shadow="md" position="bottom-end" withinPortal>
+                        <Menu.Target>
+                          <Button size="xs" variant="light">Копировать день →</Button>
+                        </Menu.Target>
+                        <Menu.Dropdown>
+                          <Menu.Label>Скопировать этот день</Menu.Label>
+                          <Menu.Item onClick={() => copyDays(selIdx, 1, selIdx + 7)}>
+                            На следующую неделю ({getDayLabel(selIdx + 7, startDate)})
+                          </Menu.Item>
+                          <Menu.Item
+                            disabled={selIdx + 1 >= schedule.length}
+                            onClick={() => copyDays(selIdx, 1, selIdx + 1)}
+                          >
+                            На следующий день
+                          </Menu.Item>
+                          <Menu.Item onClick={() => copyDays(selIdx, 1, schedule.length)}>
+                            В конец плана (новый день)
+                          </Menu.Item>
+                        </Menu.Dropdown>
+                      </Menu>
+                      <Button size="xs" variant="subtle" color="gray" onClick={() => setSelDayStr(null)}>✕</Button>
+                    </Group>
                   </Group>
                   <Stack gap="sm">
                     {schedule[selIdx].map((day, wi) => (
@@ -583,9 +742,35 @@ export default function TemplateEditor() {
               {schedule.map((dayWorkouts, idx) => (
                 <Fragment key={idx}>
                   {idx % 7 === 0 && (
-                    <Text size="xs" fw={600} c="dimmed" tt="uppercase" mt={idx > 0 ? 'xs' : 0}>
-                      Неделя {Math.floor(idx / 7) + 1}
-                    </Text>
+                    <Group justify="space-between" mt={idx > 0 ? 'xs' : 0}>
+                      <Text size="xs" fw={600} c="dimmed" tt="uppercase">
+                        Неделя {Math.floor(idx / 7) + 1}
+                      </Text>
+                      <Menu shadow="md" position="bottom-end" withinPortal>
+                        <Menu.Target>
+                          <Button size="compact-xs" variant="subtle">Копировать неделю →</Button>
+                        </Menu.Target>
+                        <Menu.Dropdown>
+                          <Menu.Label>Скопировать неделю {Math.floor(idx / 7) + 1}</Menu.Label>
+                          {Array.from({ length: weekCount }, (_, w) => w)
+                            .filter((w) => w !== Math.floor(idx / 7))
+                            .map((w) => (
+                              <Menu.Item
+                                key={w}
+                                onClick={() => copyDays(Math.floor(idx / 7) * 7, Math.min(7, schedule.length - Math.floor(idx / 7) * 7), w * 7)}
+                              >
+                                Заменить неделю {w + 1}
+                              </Menu.Item>
+                            ))}
+                          <Menu.Divider />
+                          <Menu.Item
+                            onClick={() => copyDays(Math.floor(idx / 7) * 7, Math.min(7, schedule.length - Math.floor(idx / 7) * 7), schedule.length)}
+                          >
+                            Новая неделя в конце
+                          </Menu.Item>
+                        </Menu.Dropdown>
+                      </Menu>
+                    </Group>
                   )}
                   <Paper withBorder p="xs" radius="sm">
                     <Stack gap="xs">

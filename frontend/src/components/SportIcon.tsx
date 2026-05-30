@@ -7,11 +7,12 @@ import {
   IconRun,
   IconWalk,
 } from '@tabler/icons-react'
+import type { Icon } from '@tabler/icons-react'
 import type { ComponentType } from 'react'
 
-type TablerIconProps = { size?: number; color?: string; stroke?: number }
+type TablerIconProps = { size?: string | number; color?: string; stroke?: number }
 
-function IconSkis({ size = 24, color = 'currentColor' }: { size?: number; color?: string }) {
+function IconSkis({ size = 24, color = 'currentColor' }: TablerIconProps) {
   return (
     <svg
       width={size}
@@ -44,9 +45,11 @@ function IconSkis({ size = 24, color = 'currentColor' }: { size?: number; color?
   )
 }
 
-const ICON_MAP: Record<string, ComponentType<TablerIconProps>> = {
+type AnyIcon = Icon | ComponentType<TablerIconProps>
+
+const ICON_MAP: Record<string, AnyIcon> = {
   run:      IconRun,
-  ski:      IconSkis as ComponentType<TablerIconProps>,
+  ski:      IconSkis,
   skiroll:  IconRollerSkating,
   bike:     IconBike,
   strength: IconBarbell,

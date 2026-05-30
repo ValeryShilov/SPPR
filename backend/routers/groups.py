@@ -2,13 +2,14 @@ import uuid
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.auth import get_current_user, require_role
 from backend.core.database import get_db
 from backend.models.athlete import AthleteProfile
 from backend.models.group import GroupMembership, TrainingGroup
+from backend.models.plan import PlanTemplate
 from backend.models.user import User
 from backend.schemas.group import (
     AddMemberRequest,
@@ -119,6 +120,14 @@ async def delete_group(
     current_user: User = Depends(get_current_user),
 ):
     group = await _get_owned_group(group_id, db, current_user)
+
+    # Шаблоны, привязанные к группе, остаются в системе без группы
+    await db.execute(
+        update(PlanTemplate)
+        .where(PlanTemplate.group_id == group_id)
+        .values(group_id=None)
+    )
+
     await db.delete(group)
     await db.commit()
 
