@@ -1,9 +1,21 @@
 #!/bin/bash
-# Полное развёртывание СППР на сервере.
-# Запуск (после распаковки архива в /root/sppr):
-#   bash /root/sppr/deploy/server-setup.sh
+# Полное развёртывание СППР на сервере одной командой:
+#   curl -fsSL https://raw.githubusercontent.com/ValeryShilov/SPPR/main/deploy/server-setup.sh | bash
 set -e
-cd "$(dirname "$0")/.."   # → корень проекта (/root/sppr)
+
+# Найти каталог проекта или скачать код с GitHub (если запущено через curl|bash)
+if [ -f docker-compose.prod.yml ]; then
+  :
+elif [ -f /root/sppr/docker-compose.prod.yml ]; then
+  cd /root/sppr
+else
+  cd /root
+  rm -rf sppr SPPR-main
+  echo ">>> Скачивание кода с GitHub..."
+  curl -fsSL https://github.com/ValeryShilov/SPPR/archive/refs/heads/main.tar.gz | tar xz
+  mv SPPR-main sppr
+  cd sppr
+fi
 
 # Публичный IP сервера → домен <IP>.nip.io (бесплатный HTTPS через Caddy)
 IP=$(curl -fsS https://api.ipify.org 2>/dev/null || curl -fsS https://ifconfig.me 2>/dev/null)
