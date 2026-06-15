@@ -1,0 +1,21 @@
+# ── Боевой образ backend ──────────────────────────────────────────────
+# Без --reload, gunicorn с uvicorn-воркерами, миграции при старте.
+FROM python:3.11-alpine
+
+WORKDIR /app
+
+RUN apk add --no-cache \
+    gcc musl-dev libffi-dev openssl-dev \
+    libxml2-dev libxslt-dev \
+    libstdc++ g++
+
+COPY backend/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt gunicorn
+
+COPY backend/ ./backend/
+
+# Нормализуем переводы строк (на случай CRLF из Windows) и делаем исполняемым
+RUN sed -i 's/\r$//' backend/entrypoint.sh && chmod +x backend/entrypoint.sh
+
+EXPOSE 8000
+ENTRYPOINT ["/app/backend/entrypoint.sh"]

@@ -1,0 +1,12 @@
+# Контекст сборки backend (context = корень репозитория)
+.git
+.github
+frontend/node_modules
+frontend/dist
+**/__pycache__
+**/*.pyc
+.venv
+venv
+.env
+*.md
+docs

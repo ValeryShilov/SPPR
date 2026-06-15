@@ -1,0 +1,16 @@
+# Адрес сайта задаётся переменной SITE_ADDRESS:
+#   локально  → ":80"               (HTTP на localhost, без сертификата)
+#   на сервере → "sppr.example.com"  (Caddy сам выпустит HTTPS Let's Encrypt)
+{$SITE_ADDRESS} {
+	encode gzip
+
+	# Запросы к API уходят на backend
+	handle /api/* {
+		reverse_proxy backend:8000
+	}
+
+	# Всё остальное — статика фронтенда (nginx с SPA-фолбэком)
+	handle {
+		reverse_proxy frontend:80
+	}
+}
