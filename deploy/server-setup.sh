@@ -43,8 +43,8 @@ fi
 echo ">>> docker: $(docker --version)"
 echo ">>> compose: $(docker compose version)"
 
-# 3. .env with fresh secrets (created once)
-if [ ! -f .env ]; then
+# 3. .env with fresh secrets (created if missing or invalid)
+if [ ! -f .env ] || ! grep -q "nip.io" .env; then
   echo ">>> Creating .env..."
   SECRET=$(openssl rand -base64 48 | tr -d '\n=/+' | cut -c1-64)
   DBPASS=$(openssl rand -hex 16)
