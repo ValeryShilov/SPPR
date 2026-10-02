@@ -45,3 +45,8 @@ deploy/*.tar.gz
 Thumbs.db
 .idea/
 *.swp
+.claude/settings.local.json
+
+# Дампы БД — содержат персональные данные, в репозиторий не попадают
+/backups/
+*.sql

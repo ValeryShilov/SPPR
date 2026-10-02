@@ -79,7 +79,7 @@ Celery 5.3 + Redis 7 как брокер.
 - PostgreSQL 16 — единственный источник истины
 - SQLAlchemy 2.0 async — ORM
 - Alembic — миграции схемы
-- 11 сущностей — см. docs/er-diagram.md
+- 12 сущностей — см. docs/er-diagram.md
 
 ## Структура папок backend/
     backend/
