@@ -79,7 +79,13 @@ async def update_me(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    current_user.full_name = data.full_name
+    # Поле опционально: отсутствие в теле запроса не должно затирать имя
+    if "full_name" in data.model_fields_set:
+        current_user.full_name = (data.full_name or "").strip() or None
+    if "gender" in data.model_fields_set:
+        if data.gender not in (None, "m", "f"):
+            raise HTTPException(status_code=400, detail="Недопустимое значение пола")
+        current_user.gender = data.gender
     await db.commit()
     await db.refresh(current_user)
     return current_user

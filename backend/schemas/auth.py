@@ -27,6 +27,7 @@ class UserRead(BaseModel):
     email: str
     role: str
     full_name: str | None = None
+    gender: str | None = None
     is_active: bool
 
     model_config = {"from_attributes": True}
@@ -34,6 +35,7 @@ class UserRead(BaseModel):
 
 class UpdateProfileRequest(BaseModel):
     full_name: str | None = None
+    gender: str | None = None
 
 
 class ChangePasswordRequest(BaseModel):

@@ -12,6 +12,7 @@
 - email: VARCHAR(255) UNIQUE
 - password_hash: VARCHAR(255)
 - full_name: VARCHAR(200) NULLABLE
+- gender: VARCHAR(1) NULLABLE ('m' | 'f') -- пол тренера/пользователя
 - role: ENUM('athlete', 'coach', 'admin')
 - is_active: BOOLEAN (default true)
 - created_at: TIMESTAMP

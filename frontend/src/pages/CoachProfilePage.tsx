@@ -4,6 +4,7 @@ import {
   Divider,
   Paper,
   PasswordInput,
+  Select,
   Stack,
   Text,
   TextInput,
@@ -20,23 +21,25 @@ function AccountBlock() {
   const queryClient = useQueryClient()
   const { user, setUser } = useAuth()
 
-  const { data: account } = useQuery<{ email: string; full_name: string | null }>({
+  const { data: account } = useQuery<{ email: string; full_name: string | null; gender: string | null }>({
     queryKey: ['auth-me'],
     queryFn: authApi.me,
   })
 
   const [fullName, setFullName] = useState<string>('')
+  const [gender, setGender] = useState<string | null>(null)
   const [initialized, setInitialized] = useState(false)
 
   if (account && !initialized) {
     setFullName(account.full_name ?? '')
+    setGender(account.gender ?? null)
     setInitialized(true)
   }
 
   const [saved, setSaved] = useState(false)
 
   const save = useMutation({
-    mutationFn: () => authApi.updateMe({ full_name: fullName.trim() || null }),
+    mutationFn: () => authApi.updateMe({ full_name: fullName.trim() || null, gender }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['auth-me'] })
       if (user) setUser({ ...user, full_name: fullName.trim() || null })
@@ -45,7 +48,7 @@ function AccountBlock() {
     },
   })
 
-  const changed = fullName !== (account?.full_name ?? '')
+  const changed = fullName !== (account?.full_name ?? '') || gender !== (account?.gender ?? null)
 
   return (
     <Stack gap="sm" maw={400}>
@@ -58,6 +61,14 @@ function AccountBlock() {
         placeholder="Например: Иван Петров"
         value={fullName}
         onChange={e => { setFullName(e.target.value); setSaved(false) }}
+      />
+      <Select
+        label="Пол"
+        placeholder="Выберите пол"
+        data={[{ value: 'm', label: 'Мужской' }, { value: 'f', label: 'Женский' }]}
+        value={gender}
+        onChange={value => { setGender(value); setSaved(false) }}
+        clearable
       />
       {saved && <Text size="sm" c="green">Сохранено</Text>}
       {save.isError && <Text size="sm" c="red">Ошибка сохранения</Text>}

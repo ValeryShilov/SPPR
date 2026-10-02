@@ -10,10 +10,14 @@
 POST   /auth/register         -- регистрация {email, password, full_name?} → {access_token, role}
 POST   /auth/login            -- {email, password} → {access_token, role}
 GET    /auth/me               -- текущий пользователь
-PATCH  /auth/me               -- обновить свой аккаунт (email, full_name)
+PATCH  /auth/me               -- обновить свой аккаунт (full_name, gender: m|f|null)
 POST   /auth/change-password  -- сменить пароль
 GET    /auth/coaches          -- список тренеров (для привязки/выбора)
 POST   /auth/create-athlete   -- тренер создаёт аккаунт+профиль атлета (coach/admin)
+
+При обновлении аккаунта пропущенное поле `full_name` сохраняет текущее имя,
+а явно переданное `null` или пустая строка очищает его. Правило действует
+для `/auth/me` и `/users/me`.
 
 ## Пользователи — /users
 GET    /users                      -- список пользователей (admin)

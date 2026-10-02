@@ -36,7 +36,7 @@ export const authApi = {
       new_password: newPassword,
     }).then((r) => r.data),
 
-  updateMe: (data: { full_name: string | null }) =>
+  updateMe: (data: { full_name?: string | null; gender?: string | null }) =>
     apiClient.patch('/auth/me', data).then((r) => r.data),
 
   listCoaches: (): Promise<{ id: string; email: string; full_name: string | null; role: string; is_active: boolean }[]> =>

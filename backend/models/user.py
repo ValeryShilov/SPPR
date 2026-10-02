@@ -15,6 +15,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str | None] = mapped_column(String(200))
+    gender: Mapped[str | None] = mapped_column(String(1), nullable=True)
     role: Mapped[str] = mapped_column(
         SAEnum("athlete", "coach", "admin", name="user_role"), nullable=False
     )
