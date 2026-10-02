@@ -52,7 +52,7 @@ interface Template {
   name: string
   start_date: string
   duration_days: number
-  group_id: string
+  group_id: string | null
   updated_at: string | null
 }
 

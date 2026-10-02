@@ -117,8 +117,8 @@ class AdaptTaskResponse(BaseModel):
 
 class PlanTemplateSummary(BaseModel):
     id: uuid.UUID
-    group_id: uuid.UUID
-    group_name: str
+    group_id: uuid.UUID | None      # NULL после удаления группы
+    group_name: str | None
     name: str
     start_date: date
     duration_days: int

@@ -31,9 +31,16 @@ async def _get_accessible_workout(
     if current_user.role == "coach":
         if workout.template_id is not None:
             tmpl = await db.get(PlanTemplate, workout.template_id)
-            group = await db.get(TrainingGroup, tmpl.group_id) if tmpl else None
-            if group is None or group.coach_user_id != current_user.id:
+            if tmpl is None:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
+            if tmpl.coach_user_id is not None:
+                if tmpl.coach_user_id != current_user.id:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
+            else:
+                # Старые шаблоны без владельца проверяем по сохранившейся группе.
+                group = await db.get(TrainingGroup, tmpl.group_id) if tmpl.group_id else None
+                if group is None or group.coach_user_id != current_user.id:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
         else:
             # Тренировка создана вручную — проверяем, что атлет входит в группу тренера.
             # .limit(1).first(): атлет может состоять в нескольких группах тренера.

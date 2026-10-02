@@ -39,6 +39,12 @@ async def _get_owned_template(
     db: AsyncSession,
     current_user: User,
 ) -> PlanTemplate:
+    """Возвращает шаблон, если текущий пользователь им владеет.
+
+    Владелец — plan_templates.coach_user_id. У шаблонов, созданных до появления
+    этого поля, оно может быть пустым: тогда владельца определяет тренер группы.
+    Шаблон без владельца и без группы (группа удалена) доступен только админу.
+    """
     tmpl = await db.get(PlanTemplate, template_id)
     if tmpl is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Шаблон не найден")
@@ -46,7 +52,12 @@ async def _get_owned_template(
     if current_user.role == "admin":
         return tmpl
 
-    group = await db.get(TrainingGroup, tmpl.group_id)
+    if tmpl.coach_user_id is not None:
+        if tmpl.coach_user_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
+        return tmpl
+
+    group = await db.get(TrainingGroup, tmpl.group_id) if tmpl.group_id else None
     if group is None or group.coach_user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
 
@@ -61,10 +72,19 @@ async def list_templates(
     if current_user.role == "admin":
         tmpl_result = await db.execute(select(PlanTemplate))
     elif current_user.role == "coach":
+        # outerjoin + OR: шаблон остаётся в списке и после удаления его группы
         tmpl_result = await db.execute(
             select(PlanTemplate)
-            .join(TrainingGroup, PlanTemplate.group_id == TrainingGroup.id)
-            .where(TrainingGroup.coach_user_id == current_user.id)
+            .outerjoin(TrainingGroup, PlanTemplate.group_id == TrainingGroup.id)
+            .where(
+                or_(
+                    PlanTemplate.coach_user_id == current_user.id,
+                    and_(
+                        PlanTemplate.coach_user_id.is_(None),
+                        TrainingGroup.coach_user_id == current_user.id,
+                    ),
+                )
+            )
         )
     else:
         athlete_profile = current_user.athlete_profile
@@ -84,12 +104,14 @@ async def list_templates(
         return []
 
     template_ids = [t.id for t in templates]
-    group_ids = list({t.group_id for t in templates})
+    group_ids = list({t.group_id for t in templates if t.group_id is not None})
 
-    groups_result = await db.execute(
-        select(TrainingGroup.id, TrainingGroup.name).where(TrainingGroup.id.in_(group_ids))
-    )
-    group_names: dict[uuid.UUID, str] = {row.id: row.name for row in groups_result.all()}
+    group_names: dict[uuid.UUID, str] = {}
+    if group_ids:
+        groups_result = await db.execute(
+            select(TrainingGroup.id, TrainingGroup.name).where(TrainingGroup.id.in_(group_ids))
+        )
+        group_names = {row.id: row.name for row in groups_result.all()}
 
     counts_result = await db.execute(
         select(
@@ -111,7 +133,7 @@ async def list_templates(
         PlanTemplateSummary(
             id=t.id,
             group_id=t.group_id,
-            group_name=group_names.get(t.group_id, ""),
+            group_name=group_names.get(t.group_id) if t.group_id else None,
             name=t.name,
             start_date=t.start_date,
             duration_days=t.duration_days,
@@ -139,7 +161,7 @@ async def create_template(
                 detail="Группа не принадлежит текущему тренеру",
             )
 
-    tmpl = PlanTemplate(**data.model_dump())
+    tmpl = PlanTemplate(**data.model_dump(), coach_user_id=current_user.id)
     db.add(tmpl)
     await db.commit()
     await db.refresh(tmpl)
@@ -156,14 +178,8 @@ async def get_template(
     if tmpl is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Шаблон не найден")
 
-    if current_user.role == "admin":
-        return tmpl
-
-    if current_user.role == "coach":
-        group = await db.get(TrainingGroup, tmpl.group_id)
-        if group is None or group.coach_user_id != current_user.id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
-        return tmpl
+    if current_user.role in ("admin", "coach"):
+        return await _get_owned_template(template_id, db, current_user)
 
     athlete_profile = current_user.athlete_profile
     if athlete_profile is None:
@@ -190,6 +206,14 @@ async def update_template(
     tmpl = await _get_owned_template(template_id, db, current_user)
 
     group_changed = data.group_id is not None and data.group_id != tmpl.group_id
+
+    if group_changed and current_user.role != "admin":
+        group = await db.get(TrainingGroup, data.group_id)
+        if group is None or group.coach_user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Группа не принадлежит текущему тренеру",
+            )
 
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(tmpl, field, value)
@@ -278,24 +302,21 @@ async def get_matrix(
     if tmpl is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Шаблон не найден")
 
-    if current_user.role not in ("admin",):
-        if current_user.role == "coach":
-            group = await db.get(TrainingGroup, tmpl.group_id)
-            if group is None or group.coach_user_id != current_user.id:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
-        else:
-            athlete_profile = current_user.athlete_profile
-            if athlete_profile is None:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
-            result = await db.execute(
-                select(GroupMembership).where(
-                    GroupMembership.group_id == tmpl.group_id,
-                    GroupMembership.athlete_id == athlete_profile.id,
-                    GroupMembership.is_active.is_(True),
-                )
+    if current_user.role in ("admin", "coach"):
+        await _get_owned_template(template_id, db, current_user)
+    else:
+        athlete_profile = current_user.athlete_profile
+        if athlete_profile is None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
+        result = await db.execute(
+            select(GroupMembership).where(
+                GroupMembership.group_id == tmpl.group_id,
+                GroupMembership.athlete_id == athlete_profile.id,
+                GroupMembership.is_active.is_(True),
             )
-            if result.scalar_one_or_none() is None:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
+        )
+        if result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
 
     result = await db.execute(
         select(IndividualWorkout)

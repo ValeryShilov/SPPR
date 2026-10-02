@@ -20,8 +20,8 @@ interface TrainingGroup { id: string; name: string }
 
 interface PlanTemplateSummary {
   id: string
-  group_id: string
-  group_name: string
+  group_id: string | null      // null, если группа удалена
+  group_name: string | null
   name: string
   start_date: string
   duration_days: number
@@ -134,7 +134,11 @@ export default function PlanningPage() {
                       </Badge>
                     </Group>
                     <Group gap="xs" wrap="wrap">
-                      <Text size="xs" c="dimmed">Группа: <b>{t.group_name}</b></Text>
+                      {t.group_name ? (
+                        <Text size="xs" c="dimmed">Группа: <b>{t.group_name}</b></Text>
+                      ) : (
+                        <Badge color="orange" variant="light" size="xs">Группа удалена</Badge>
+                      )}
                       <Text size="xs" c="dimmed">·</Text>
                       <Text size="xs" c="dimmed">
                         {t.start_date} · {t.duration_days} дн.

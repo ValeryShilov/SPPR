@@ -64,6 +64,7 @@
 ### plan_templates
 - id: UUID PK
 - group_id: UUID FK → training_groups NULLABLE  -- NULL после удаления группы
+- coach_user_id: UUID FK → users NULLABLE  -- владелец шаблона (не зависит от группы)
 - name: VARCHAR(200)
 - start_date: DATE
 - duration_days: INT
@@ -167,6 +168,7 @@ Singleton-таблица настраиваемых порогов диагно�
 | users → athlete_profiles | user_id | 1:0..1 |
 | users → athlete_profiles | coach_user_id (прямая привязка) | 1:N |
 | users → alert_settings | updated_by_id | 1:0..1 |
+| users → plan_templates | coach_user_id (владелец шаблона) | 1:N |
 | training_groups ↔ athlete_profiles | через group_memberships | N:M |
 | athlete_profiles → physiological_markers | athlete_id | 1:N |
 | training_groups → plan_templates | group_id (NULLABLE) | 1:N |
@@ -183,6 +185,8 @@ Singleton-таблица настраиваемых порогов диагно�
 ## Примечания по поведению
 
 - При удалении группы `plan_templates.group_id` обнуляется (шаблоны сохраняются).
+  Доступ тренера к таким шаблонам и их тренировкам сохраняется через `coach_user_id`; чтобы снова
+  запустить адаптацию, шаблону нужно назначить новую группу.
 - При смене группы шаблона незавершённые `individual_workouts` удаляются и
   пересоздаются при повторной адаптации.
 - `actual_telemetry` и `diagnostic_alerts` каскадно удаляются вместе с

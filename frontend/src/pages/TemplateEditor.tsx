@@ -90,7 +90,7 @@ interface DayConfig {
 
 interface Template {
   id: string
-  group_id: string
+  group_id: string | null      // null, если группа удалена
   name: string
   start_date: string
   duration_days: number
@@ -296,7 +296,7 @@ export default function TemplateEditor() {
 
   useEffect(() => {
     if (template) {
-      setGroupId(template.group_id)
+      setGroupId(template.group_id ?? '')
       setName(template.name)
       setStartDate(template.start_date)
       setDurationDays(template.duration_days === 0 ? '' : template.duration_days)
@@ -539,7 +539,7 @@ export default function TemplateEditor() {
   const save = useMutation({
     mutationFn: () =>
       plansApi.updateTemplate(templateId!, {
-        group_id: groupId,
+        group_id: groupId || null,
         name,
         start_date: startDate,
         duration_days: Number(durationDays),
@@ -575,6 +575,9 @@ export default function TemplateEditor() {
           <Group grow align="flex-end">
             <Select
               label="Группа"
+              placeholder="Группа не выбрана"
+              description={!groupId ? 'Группа удалена — выберите другую' : undefined}
+              error={!groupId}
               data={groups.map((g) => ({ value: g.id, label: g.name }))}
               value={groupId}
               onChange={(v) => setGroupId(v ?? '')}
@@ -877,7 +880,13 @@ export default function TemplateEditor() {
             <Button variant="light" loading={save.isPending} onClick={() => save.mutate()}>
               Сохранить шаблон
             </Button>
-            <Button color="teal" loading={adapt.isPending} onClick={() => adapt.mutate()}>
+            <Button
+              color="teal"
+              loading={adapt.isPending}
+              disabled={!groupId}
+              title={!groupId ? 'Расчёт невозможен без группы' : undefined}
+              onClick={() => adapt.mutate()}
+            >
               Запустить расчёт →
             </Button>
           </Group>
