@@ -21,6 +21,7 @@ from backend.schemas.analytics import (
     CoachAthleteGroup,
     GroupSummaryItem,
     GroupSummaryResponse,
+    ForecastResponse,
     GroupWeekAthlete,
     GroupWeekWorkout,
     LoadPoint,
@@ -32,6 +33,7 @@ from backend.schemas.analytics import (
     VolumeWeekEntry,
     VolumeWeekPoint,
 )
+from backend.services.analytics import forecast_load
 
 router = APIRouter()
 
@@ -299,6 +301,21 @@ async def get_volume(
         weekly=_make_chart_points(week_type_dur, week_type_km),
         daily=_make_chart_points(day_type_dur, day_type_km),
     )
+
+
+@router.get("/forecast/{athlete_id}", response_model=ForecastResponse)
+async def get_forecast(
+    athlete_id: uuid.UUID,
+    until: date = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Прогноз ATL/CTL/TSB по запланированным тренировкам до целевого старта."""
+    await _require_athlete_access(athlete_id, db, current_user)
+    try:
+        return await forecast_load(athlete_id, db, until=until)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
 @router.get("/alerts/{athlete_id}", response_model=list[AlertRead])

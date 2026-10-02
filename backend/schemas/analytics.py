@@ -29,6 +29,26 @@ class PlanFactResponse(BaseModel):
     data: list[PlanFactPoint]
 
 
+class ForecastPoint(BaseModel):
+    date: date
+    planned_tss: Decimal
+    atl_7d: Decimal
+    ctl_42d: Decimal
+    tsb: Decimal
+
+
+class ForecastResponse(BaseModel):
+    athlete_id: uuid.UUID
+    target_event_name: str | None
+    target_event_date: date | None
+    days_to_event: int | None
+    tsb_at_event: float | None
+    # overload | underrecovered | optimal | detrained; None — целевой старт не задан
+    verdict_code: str | None
+    verdict: str | None
+    data: list[ForecastPoint]
+
+
 class AlertRead(BaseModel):
     id: uuid.UUID
     athlete_id: uuid.UUID

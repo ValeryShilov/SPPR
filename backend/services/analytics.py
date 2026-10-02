@@ -1,6 +1,6 @@
 """Аналитическое ядро СППР.
 
-Четыре изолированных публичных функций вызываются из роутеров и Celery-задач;
+Пять изолированных публичных функций вызываются из роутеров и Celery-задач;
 HTTP-слой в этом модуле не импортируется.
 
 Структура модуля
@@ -8,7 +8,7 @@ HTTP-слой в этом модуле не импортируется.
   Справочные данные        — константы зон ЧСС, методических ограничений,
                              постоянных времени ATL/CTL
   Чистые вычисления        — _k_qual, _k_form, _decay, _advance_load,
-                             _prognosis_tss, _trailing_run …
+                             _form_verdict, _prognosis_tss, _trailing_run …
   Зоны ЧСС                 — _fetch_max_hr, _fetch_threshold_hr, _build_zones
   Адаптация шаблона        — _resolve_athlete_params
   Индексы нагрузки         — _resolve_threshold_hr, _compute_workout_tss,
@@ -17,7 +17,7 @@ HTTP-слой в этом модуле не импортируется.
   Алерты — правила         — _check_p1 … _check_h5, _ALERT_RULES
   Алерты — сохранение      — _persist_new_alerts
   Публичные функции        — calculate_hr_zones, adapt_template,
-                             calculate_load_indexes,
+                             calculate_load_indexes, forecast_load,
                              generate_alerts
 """
 import uuid
@@ -42,7 +42,7 @@ from backend.models.athlete import (
 from backend.models.group import GroupMembership
 from backend.models.plan import IndividualWorkout, PlanTemplate
 from backend.models.telemetry import ActualTelemetry
-from backend.schemas.analytics import AlertRead
+from backend.schemas.analytics import AlertRead, ForecastPoint, ForecastResponse
 from backend.schemas.athlete import HRZone, HRZonesResponse
 
 
@@ -104,6 +104,9 @@ _ZONE_MAX_MIN: dict[str, int] = {"Z1": 240, "Z2": 240, "Z3": 120, "Z4": 90, "Z5"
 # Постоянные времени экспоненциального сглаживания нагрузки (дни)
 _ATL_TIME_CONSTANT = 7    # острая нагрузка — «усталость»
 _CTL_TIME_CONSTANT = 42   # хроническая нагрузка — «форма»
+
+# Горизонт прогноза по умолчанию, когда у атлета не задан целевой старт (дни)
+_DEFAULT_FORECAST_DAYS = 42
 
 # Средняя точка зоны (% от ЧССmax) — для прогнозного TSS черновиков
 _ZONE_MIDPOINTS: dict[str, float] = {z: (lo + hi) / 2 for z, _, lo, hi in _ZONE_DEFS}
@@ -221,6 +224,19 @@ def _advance_load(atl: float, ctl: float, daily_tss: float) -> tuple[float, floa
     )
 
 
+def _form_verdict(tsb: float) -> tuple[str, str]:
+    """Оценка готовности по TSB на день старта → (код, формулировка).
+
+    Ориентиры пика формы: коридор TSB +5…+25 считается оптимальным,
+    ниже −10 — недовосстановление, выше +25 — потеря наработанной формы.
+    """
+    if tsb < -10:
+        return ("overload", "Высокий риск недовосстановления: к старту форма не выйдет на пик")
+    if tsb < 5:
+        return ("underrecovered", "Подводка недостаточна — TSB ниже оптимального коридора")
+    if tsb <= 25:
+        return ("optimal", "Оптимальная форма к старту")
+    return ("detrained", "Слишком длинная разгрузка — риск потерять наработанную форму")
 
 
 def _trailing_run(series: list, predicate: Callable) -> int:
@@ -422,6 +438,28 @@ async def _actual_tss_by_date(
     return {row.planned_date: float(row.total) for row in res.all() if row.total is not None}
 
 
+async def _planned_tss_by_date(
+    athlete_id: uuid.UUID, date_from: date, date_to: date, db: AsyncSession
+) -> dict[date, float]:
+    """Сумма планового TSS по дням диапазона — вход для прогноза формы.
+
+    Учитываются и черновики, и опубликованные: тренер строит прогноз до
+    утверждения плана, чтобы решить, утверждать ли его в таком виде.
+    """
+    res = await db.execute(
+        select(
+            IndividualWorkout.planned_date,
+            func.sum(IndividualWorkout.planned_tss).label("total"),
+        )
+        .where(
+            IndividualWorkout.athlete_id == athlete_id,
+            IndividualWorkout.status.in_(["draft", "published"]),
+            IndividualWorkout.planned_date >= date_from,
+            IndividualWorkout.planned_date <= date_to,
+        )
+        .group_by(IndividualWorkout.planned_date)
+    )
+    return {row.planned_date: float(row.total) for row in res.all() if row.total is not None}
 
 
 async def _load_anchor(
@@ -1017,6 +1055,73 @@ async def calculate_load_indexes(
     await db.commit()
 
 
+async def forecast_load(
+    athlete_id: uuid.UUID, db: AsyncSession, until: date | None = None
+) -> ForecastResponse:
+    """Прогнозирует ATL/CTL/TSB вперёд по запланированным тренировкам.
+
+    Прокатывает ту же рекурренту, что и фактическая история, но на входе —
+    planned_tss черновиков и опубликованных тренировок. Отвечает на вопрос
+    «в какой форме атлет подойдёт к старту, если план выполнить как есть».
+
+    Горизонт: явный `until` → дата целевого старта из профиля → 42 дня.
+    Дни без тренировок дают затухание, поэтому подводка видна на графике.
+
+    Параметры:
+        athlete_id: UUID профиля атлета.
+        db: асинхронная сессия SQLAlchemy.
+        until: конечная дата прогноза (включительно), опционально.
+
+    Возвращает:
+        ForecastResponse с рядом точек и оценкой готовности к старту.
+
+    Исключения:
+        ValueError — если профиль атлета не найден.
+    """
+    profile = await db.get(AthleteProfile, athlete_id)
+    if not profile:
+        raise ValueError(f"Атлет {athlete_id} не найден")
+
+    today = date.today()
+    event_date = profile.target_event_date
+    horizon = until or event_date or (today + timedelta(days=_DEFAULT_FORECAST_DAYS))
+    # Прошедший старт не прогнозируем — показываем стандартный горизонт
+    if horizon <= today:
+        horizon = today + timedelta(days=_DEFAULT_FORECAST_DAYS)
+
+    start = today + timedelta(days=1)
+    atl, ctl = await _load_anchor(athlete_id, start, db)
+    planned = await _planned_tss_by_date(athlete_id, start, horizon, db)
+
+    points: list[ForecastPoint] = []
+    tsb_at_event: float | None = None
+
+    for offset in range((horizon - start).days + 1):
+        day = start + timedelta(days=offset)
+        daily_tss = planned.get(day, 0.0)
+        atl, ctl, tsb = _advance_load(atl, ctl, daily_tss)
+        points.append(ForecastPoint(
+            date=day,
+            planned_tss=_dec(daily_tss),
+            atl_7d=_dec(atl),
+            ctl_42d=_dec(ctl),
+            tsb=_dec(tsb),
+        ))
+        if event_date is not None and day == event_date:
+            tsb_at_event = round(tsb, 2)
+
+    verdict_code, verdict = _form_verdict(tsb_at_event) if tsb_at_event is not None else (None, None)
+
+    return ForecastResponse(
+        athlete_id=athlete_id,
+        target_event_name=profile.target_event_name,
+        target_event_date=event_date,
+        days_to_event=(event_date - today).days if event_date and event_date > today else None,
+        tsb_at_event=tsb_at_event,
+        verdict_code=verdict_code,
+        verdict=verdict,
+        data=points,
+    )
 
 
 async def generate_alerts(

@@ -40,12 +40,14 @@ from backend.services.analytics import (
     _check_p5,
     _compute_session_rpe_tss,
     _decay,
+    _form_verdict,
     _k_form,
     _k_qual,
     _resolve_actual_tss,
     adapt_template,
     calculate_hr_zones,
     calculate_load_indexes,
+    forecast_load,
     generate_alerts,
 )
 
@@ -257,6 +259,27 @@ class TestAdvanceLoad:
         assert ctl == pytest.approx(_decay(100.0, 5, 42))
 
 
+class TestFormVerdict:
+    """Оценка готовности по TSB на день старта."""
+
+    def test_deep_fatigue_is_overload(self):
+        assert _form_verdict(-20.0)[0] == "overload"
+
+    def test_just_below_corridor_is_underrecovered(self):
+        assert _form_verdict(0.0)[0] == "underrecovered"
+
+    def test_corridor_is_optimal(self):
+        assert _form_verdict(5.0)[0] == "optimal"
+        assert _form_verdict(15.0)[0] == "optimal"
+        assert _form_verdict(25.0)[0] == "optimal"
+
+    def test_above_corridor_is_detrained(self):
+        assert _form_verdict(30.0)[0] == "detrained"
+
+    def test_every_verdict_has_message(self):
+        for tsb in (-50.0, -5.0, 10.0, 40.0):
+            code, message = _form_verdict(tsb)
+            assert code and message
 
 
 class TestResolveActualTSS:
@@ -853,6 +876,66 @@ class TestCalculateLoadIndexes:
         assert float(res_after.scalar_one().ctl_42d) > ctl_before
 
 
+class TestForecastLoad:
+    """Прогноз формы по запланированным тренировкам."""
+
+    async def test_default_horizon_without_target_event(self, db, athlete_data):
+        _, profile = athlete_data
+        result = await forecast_load(profile.id, db)
+
+        assert len(result.data) == 42
+        assert result.data[0].date == TODAY + timedelta(days=1)
+        assert result.target_event_date is None
+        assert result.verdict is None
+
+    async def test_verdict_present_for_target_event(self, db, athlete_data):
+        _, profile = athlete_data
+        profile.target_event_name = "Чемпионат области"
+        profile.target_event_date = TODAY + timedelta(days=20)
+        await db.flush()
+
+        result = await forecast_load(profile.id, db)
+
+        assert result.days_to_event == 20
+        assert result.tsb_at_event is not None
+        assert result.verdict_code in {"overload", "underrecovered", "optimal", "detrained"}
+        assert result.verdict
+
+    async def test_explicit_until_overrides_horizon(self, db, athlete_data):
+        _, profile = athlete_data
+        result = await forecast_load(profile.id, db, until=TODAY + timedelta(days=10))
+        assert len(result.data) == 10
+
+    async def test_past_event_falls_back_to_default_horizon(self, db, athlete_data):
+        _, profile = athlete_data
+        profile.target_event_date = TODAY - timedelta(days=5)
+        await db.flush()
+
+        result = await forecast_load(profile.id, db)
+
+        assert len(result.data) == 42
+        assert result.days_to_event is None      # старт уже прошёл
+
+    async def test_planned_workouts_raise_forecast_load(self, db, template_data):
+        template, profile = template_data
+        db.add(IndividualWorkout(
+            id=uuid.uuid4(),
+            template_id=template.id,
+            athlete_id=profile.id,
+            planned_date=TODAY + timedelta(days=1),
+            planned_tss=Decimal("120.00"),
+            status="published",
+        ))
+        await db.flush()
+
+        result = await forecast_load(profile.id, db)
+
+        assert float(result.data[0].planned_tss) == 120.0
+        assert float(result.data[0].atl_7d) > 0
+
+    async def test_raises_for_unknown_athlete(self, db):
+        with pytest.raises(ValueError):
+            await forecast_load(uuid.uuid4(), db)
 
 
 class TestGenerateAlerts:

@@ -1,5 +1,24 @@
 import apiClient from './client'
 
+export interface ForecastPoint {
+  date: string
+  planned_tss: number
+  atl_7d: number
+  ctl_42d: number
+  tsb: number
+}
+
+export interface ForecastResponse {
+  athlete_id: string
+  target_event_name: string | null
+  target_event_date: string | null
+  days_to_event: number | null
+  tsb_at_event: number | null
+  verdict_code: 'overload' | 'underrecovered' | 'optimal' | 'detrained' | null
+  verdict: string | null
+  data: ForecastPoint[]
+}
+
 export const analyticsApi = {
   getLoad: (athleteId: string, params?: { date_from?: string; date_to?: string }) =>
     apiClient.get(`/analytics/load/${athleteId}`, { params }).then((r) => r.data),
@@ -26,4 +45,7 @@ export const analyticsApi = {
 
   getVolume: (athleteId: string, params?: { date_from?: string; date_to?: string }) =>
     apiClient.get(`/analytics/volume/${athleteId}`, { params }).then((r) => r.data),
+
+  getForecast: (athleteId: string, params?: { until?: string }): Promise<ForecastResponse> =>
+    apiClient.get(`/analytics/forecast/${athleteId}`, { params }).then((r) => r.data),
 }

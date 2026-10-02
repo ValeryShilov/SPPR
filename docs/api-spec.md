@@ -104,6 +104,9 @@ GET    /metrics/today               -- метрики за сегодня
 GET    /analytics/load/{athlete_id}        -- ATL/CTL/TSB за период
 GET    /analytics/plan-fact/{athlete_id}   -- план-факт по неделям
 GET    /analytics/volume/{athlete_id}      -- объёмы и время в зонах
+GET    /analytics/forecast/{athlete_id}?until=DATE
+                                           -- прогноз ATL/CTL/TSB по плану
+                                              + оценка готовности к старту
 GET    /analytics/alerts/{athlete_id}      -- активные алерты
 PUT    /analytics/alerts/{id}/resolve      -- отметить алерт решённым
 GET    /analytics/group-summary/{gid}      -- сводка по группе

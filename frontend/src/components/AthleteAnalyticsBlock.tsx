@@ -30,7 +30,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { analyticsApi } from '../api/analytics'
+import { analyticsApi, type ForecastResponse } from '../api/analytics'
 import AlertsPanel from './AlertsPanel'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -577,6 +577,110 @@ function FitnessCharts({ athleteId, dateFrom, dateTo }: { athleteId: string; dat
   )
 }
 
+// ─── Прогноз формы к целевому старту ──────────────────────────────────────────
+
+const VERDICT_STYLE: Record<string, { color: string; bg: string; label: string }> = {
+  overload:       { color: '#C8102E', bg: '#fff5f5', label: 'Недовосстановление' },
+  underrecovered: { color: '#f76707', bg: '#fff4e6', label: 'Подводка недостаточна' },
+  optimal:        { color: '#2f9e44', bg: '#ebfbee', label: 'Оптимальная форма' },
+  detrained:      { color: '#1c7ed6', bg: '#e7f5ff', label: 'Риск растренированности' },
+}
+
+function ForecastTooltip({ active, payload, label }: TipProps) {
+  if (!active || !payload?.length || !label) return null
+  return (
+    <Paper p="xs" withBorder shadow="sm" style={{ minWidth: 140 }}>
+      <Text size="xs" fw={600} mb={4}>{fmtDayMonth(label)}</Text>
+      {payload.filter(p => p.dataKey !== 'tsb_pos' && p.dataKey !== 'tsb_neg').map(p => (
+        <Text key={p.dataKey} size="xs" style={{ color: p.color }}>
+          {p.name}: {Number(p.value).toFixed(1)}
+        </Text>
+      ))}
+    </Paper>
+  )
+}
+
+function ForecastSection({ athleteId }: { athleteId: string }) {
+  const { data, isLoading } = useQuery<ForecastResponse>({
+    queryKey: ['forecast', athleteId],
+    queryFn:  () => analyticsApi.getForecast(athleteId),
+  })
+
+  const chartData = (data?.data ?? []).map(p => ({
+    date: p.date,
+    ATL: Number(p.atl_7d), CTL: Number(p.ctl_42d), TSB: Number(p.tsb),
+    tsb_pos: Math.max(0, Number(p.tsb)), tsb_neg: Math.min(0, Number(p.tsb)),
+  }))
+  const tickStep = Math.max(1, Math.floor(chartData.length / 10))
+  const style = data?.verdict_code ? VERDICT_STYLE[data.verdict_code] : null
+
+  return (
+    <Paper withBorder p="md" radius="md">
+      <Title order={4} mb={4}>Прогноз формы</Title>
+      <Text size="xs" c="dimmed" mb="md">
+        Расчёт вперёд по запланированным тренировкам: как изменятся ATL/CTL/TSB,
+        если план выполнить как есть
+      </Text>
+
+      {data?.target_event_date && style && (
+        <Box mb="md" p="sm" style={{
+          background: style.bg, borderRadius: 8, borderLeft: `3px solid ${style.color}`,
+        }}>
+          <Group justify="space-between" wrap="wrap" gap="xs">
+            <Stack gap={2}>
+              <Text size="sm" fw={700} style={{ color: style.color }}>{style.label}</Text>
+              <Text size="xs" c="dimmed">{data.verdict}</Text>
+            </Stack>
+            <Stack gap={2} align="flex-end">
+              <Text size="xs" c="dimmed">
+                {data.target_event_name ?? 'Целевой старт'} · {fmtDayMonth(data.target_event_date)}
+                {data.days_to_event != null ? ` (через ${data.days_to_event} дн.)` : ''}
+              </Text>
+              {data.tsb_at_event != null && (
+                <Text size="sm" fw={700} style={{ color: style.color }}>
+                  TSB на старте: {data.tsb_at_event > 0 ? '+' : ''}{data.tsb_at_event.toFixed(1)}
+                </Text>
+              )}
+            </Stack>
+          </Group>
+        </Box>
+      )}
+
+      {!isLoading && !data?.target_event_date && (
+        <Text size="xs" c="dimmed" mb="md" style={{ fontStyle: 'italic' }}>
+          Целевой старт не задан — показан прогноз на 6 недель вперёд.
+          Укажите дату старта в профиле, чтобы получить оценку готовности.
+        </Text>
+      )}
+
+      {chartData.length === 0 ? <EmptyChart height={260} loading={isLoading} /> : (
+        <>
+          <LoadLegend />
+          <ResponsiveContainer width="100%" height={260}>
+            <ComposedChart data={chartData} margin={{ top:4, right:20, left:0, bottom:0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e8e8e8" />
+              <XAxis dataKey="date" tickFormatter={fmtDayMonth} interval={tickStep}
+                tick={{ fontSize:11, fill:'#757575' }} />
+              <YAxis tick={{ fontSize:11, fill:'#757575' }} width={38} />
+              <Tooltip content={<ForecastTooltip />} />
+              <ReferenceLine y={0} stroke="#bdbdbd" strokeDasharray="4 2" />
+              {data?.target_event_date && (
+                <ReferenceLine x={data.target_event_date} stroke="#C8102E" strokeWidth={1.5}
+                  label={{ value: 'Старт', position: 'top', fontSize: 11, fill: '#C8102E' }} />
+              )}
+              <Area dataKey="tsb_pos" fill={COLOR_TSB_POS} fillOpacity={0.2} stroke="none" legendType="none" isAnimationActive={false} name="tsb_pos" />
+              <Area dataKey="tsb_neg" fill={COLOR_TSB_NEG} fillOpacity={0.25} stroke="none" legendType="none" isAnimationActive={false} name="tsb_neg" />
+              <Area dataKey="ATL" stroke={COLOR_ATL} strokeWidth={2} fill="none" dot={false} legendType="none" isAnimationActive={false} name="ATL" />
+              <Area dataKey="CTL" stroke={COLOR_CTL} strokeWidth={2} fill="none" dot={false} legendType="none" isAnimationActive={false} name="CTL" />
+              <Area dataKey="TSB" stroke={COLOR_TSB} strokeWidth={1.5} strokeDasharray="6 3" fill="none" dot={false} legendType="none" isAnimationActive={false} name="TSB" />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </>
+      )}
+    </Paper>
+  )
+}
+
 // ─── Main exported block ──────────────────────────────────────────────────────
 
 export default function AthleteAnalytics({ athleteId }: { athleteId: string }) {
@@ -645,6 +749,11 @@ export default function AthleteAnalytics({ athleteId }: { athleteId: string }) {
           </Group>
         </Group>
         <FitnessCharts athleteId={athleteId} dateFrom={fitnessFrom} dateTo={fitnessTo} />
+      </div>
+
+      <div>
+        <Title order={3} mb="sm">Прогноз к старту</Title>
+        <ForecastSection athleteId={athleteId} />
       </div>
 
       <div>

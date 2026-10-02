@@ -47,11 +47,12 @@
 Изолированный модуль, не принимает HTTP-запросы напрямую.
 Вызывается из роутеров и Celery-задач.
 
-Четыре компонента:
+Пять компонентов:
 - calculate_hr_zones(athlete_id) → зоны Z1-Z5
 - adapt_template(template_id) → расчётная матрица черновиков
 - calculate_load_indexes(athlete_id, workout_id) → TSS/ATL/CTL/TSB
   (каскадный пересчёт истории от даты тренировки до сегодня)
+- forecast_load(athlete_id) → прогноз ATL/CTL/TSB к целевому старту
 - generate_alerts(athlete_id) → диагностические алерты
 
 Подробнее — см. docs/algorithms.md
