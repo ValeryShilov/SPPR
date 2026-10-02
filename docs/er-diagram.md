@@ -107,7 +107,7 @@
 - hr_zone3_min: INT NULLABLE  -- Z3
 - hr_zone4_min: INT NULLABLE  -- Z4
 - hr_zone5_min: INT NULLABLE  -- Z5
-- rpe: INT NULLABLE  -- субъективная оценка нагрузки (Borg)
+- rpe: INT NULLABLE  -- тяжесть тренировки, шкала Борга CR10 (1 — очень легко, 10 — предельно тяжело)
 - comment: TEXT NULLABLE
 - timeseries: JSONB NULLABLE  -- downsampled ряд точек {s, hr, z, spd}
 - raw_file_path: TEXT NULLABLE  -- путь к исходному файлу телеметрии

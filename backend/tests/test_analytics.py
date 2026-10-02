@@ -38,9 +38,11 @@ from backend.services.analytics import (
     _check_p4,
     _advance_load,
     _check_p5,
+    _compute_session_rpe_tss,
     _decay,
     _k_form,
     _k_qual,
+    _resolve_actual_tss,
     adapt_template,
     calculate_hr_zones,
     calculate_load_indexes,
@@ -177,6 +179,33 @@ class TestKForm:
         assert _k_form(-25.0) == 0.90  # ≥ -25 → 0.90
 
 
+class TestSessionRPE:
+    """TSS по session-RPE — запасной путь при отсутствии данных ЧСС."""
+
+    def test_rpe_8_one_hour_equals_100_tss(self):
+        # RPE 8 ≈ ПАНО (IF = 1.0), час на пороге = 100 TSS — та же шкала, что и hrTSS
+        assert _compute_session_rpe_tss(8, 60) == pytest.approx(100.0)
+
+    def test_easy_session_scores_low(self):
+        assert _compute_session_rpe_tss(2, 60) == pytest.approx(30.25)
+
+    def test_scales_linearly_with_duration(self):
+        assert _compute_session_rpe_tss(8, 30) == pytest.approx(50.0)
+
+    def test_monotonic_in_rpe(self):
+        values = [_compute_session_rpe_tss(r, 60) for r in range(1, 11)]
+        assert values == sorted(values)
+
+    def test_clamps_out_of_scale_values(self):
+        assert _compute_session_rpe_tss(99, 60) == _compute_session_rpe_tss(10, 60)
+        assert _compute_session_rpe_tss(-3, 60) == _compute_session_rpe_tss(1, 60)
+
+    def test_no_rpe_gives_zero(self):
+        assert _compute_session_rpe_tss(None, 60) == 0.0
+
+    def test_no_duration_gives_zero(self):
+        assert _compute_session_rpe_tss(8, None) == 0.0
+        assert _compute_session_rpe_tss(8, 0) == 0.0
 
 
 class TestDecay:
@@ -230,6 +259,18 @@ class TestAdvanceLoad:
 
 
 
+class TestResolveActualTSS:
+    """Выбор источника TSS: ЧСС приоритетнее, RPE — запасной вариант."""
+
+    def test_prefers_hr_when_available(self):
+        # 60 мин при ЧСС 170 и ПАНО 170 → IF = 1.0 → 100 TSS, RPE игнорируется
+        assert _resolve_actual_tss(170, 2, 60, 170.0) == pytest.approx(100.0)
+
+    def test_falls_back_to_rpe_without_hr(self):
+        assert _resolve_actual_tss(None, 8, 60, 170.0) == pytest.approx(100.0)
+
+    def test_zero_when_neither_source_present(self):
+        assert _resolve_actual_tss(None, None, 60, 170.0) == 0.0
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -757,6 +798,20 @@ class TestCalculateLoadIndexes:
         # без нагрузки острая форма затухает
         assert float(rows[-1].atl_7d) < float(rows[0].atl_7d)
 
+    async def test_rpe_only_telemetry_produces_load(self, db, workout_data):
+        workout, tel = workout_data
+        tel.avg_hr = None            # тренировка без пульсометра
+        tel.rpe = 8
+        await db.flush()
+
+        await calculate_load_indexes(workout.athlete_id, workout.id, db)
+
+        result = await db.execute(
+            select(TrainingLoadHistory).where(
+                TrainingLoadHistory.athlete_id == workout.athlete_id
+            )
+        )
+        assert float(result.scalar_one().daily_tss) > 0
 
     async def test_backdated_workout_recalculates_later_days(self, db, workout_data):
         workout, _ = workout_data

@@ -95,8 +95,8 @@ function PostUploadForm({ workoutId, workoutType }: { workoutId?: string; workou
       )}
 
       <NumberInput
-        label="Самочувствие на тренировке (1–10)"
-        description="1 — очень тяжело, 10 — легко"
+        label="Тяжесть тренировки (1–10)"
+        description="1 — очень легко, 10 — предельно тяжело"
         value={rpe} onChange={setRpe}
         min={1} max={10} size="sm"
       />
@@ -219,8 +219,8 @@ function ManualForm({ workoutId, workoutType }: { workoutId?: string; workoutTyp
       </SimpleGrid>
 
       <NumberInput
-        label="Самочувствие на тренировке (1–10)"
-        description="1 — очень тяжело, 10 — легко"
+        label="Тяжесть тренировки (1–10)"
+        description="1 — очень легко, 10 — предельно тяжело"
         value={rpe} onChange={setRpe}
         min={1} max={10} size="sm"
       />

@@ -108,6 +108,16 @@ _CTL_TIME_CONSTANT = 42   # хроническая нагрузка — «фор
 # Средняя точка зоны (% от ЧССmax) — для прогнозного TSS черновиков
 _ZONE_MIDPOINTS: dict[str, float] = {z: (lo + hi) / 2 for z, _, lo, hi in _ZONE_DEFS}
 
+# Соответствие RPE (шкала Борга CR10: 1 — очень легко, 10 — предельно тяжело)
+# коэффициенту интенсивности IF. RPE 8 ≈ уровень ПАНО (IF = 1.0), поэтому
+# session-RPE попадает в ту же шкалу, что и TSS по ЧСС, и индексы остаются
+# сопоставимыми независимо от того, каким путём получена тренировка.
+_RPE_INTENSITY_FACTOR: dict[int, float] = {
+    1: 0.50, 2: 0.55, 3: 0.65, 4: 0.72, 5: 0.80,
+    6: 0.85, 7: 0.92, 8: 1.00, 9: 1.06, 10: 1.12,
+}
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Чистые вычислительные функции (без I/O, детерминированы)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -161,8 +171,31 @@ def _compute_workout_tss(
     return (duration_min * intensity_factor ** 2 * 100) / 60
 
 
+def _compute_session_rpe_tss(rpe: int | None, duration_min: int | None) -> float:
+    """TSS по методике session-RPE (Foster) — запасной путь при отсутствии данных ЧСС.
+
+    Формула та же, что и для TSS по пульсу: (T × IF² × 100) / 60, но IF берётся
+    из таблицы соответствия RPE (см. _RPE_INTENSITY_FACTOR), а не как ЧСС_ср/ЧССПАНО.
+    Значения вне 1–10 обрезаются по границам шкалы.
+    """
+    if not rpe or not duration_min or duration_min <= 0:
+        return 0.0
+    intensity_factor = _RPE_INTENSITY_FACTOR[max(1, min(10, int(rpe)))]
+    return (duration_min * intensity_factor ** 2 * 100) / 60
 
 
+def _resolve_actual_tss(
+    avg_hr: int | None, rpe: int | None, duration_min: int | None, threshold_hr: float
+) -> float:
+    """Фактический TSS тренировки: по ЧСС, а при её отсутствии — по session-RPE.
+
+    Тренировка без пульсометра, но с оценкой тяжести, тоже попадает в индексы
+    нагрузки — иначе у атлета без спортивных часов ATL/CTL остаются нулевыми.
+    """
+    tss = _compute_workout_tss(avg_hr, duration_min, threshold_hr)
+    if tss > 0:
+        return tss
+    return _compute_session_rpe_tss(rpe, duration_min)
 
 
 def _decay(value: float, days: int, time_constant: int) -> float:
@@ -945,7 +978,8 @@ async def calculate_load_indexes(
         CTLₙ = CTL₍ₙ₋₁₎ + (TSS_день − CTL₍ₙ₋₁₎) / 42
         TSBₙ = CTL₍ₙ₋₁₎ − ATL₍ₙ₋₁₎
 
-    При нескольких тренировках за день TSS суммируются.
+    Если в телеметрии нет ЧСС, TSS считается по session-RPE (Foster) — см.
+    _resolve_actual_tss. При нескольких тренировках за день TSS суммируются.
     ЧССПАНО берётся из последнего physiological_marker; при отсутствии — 87% ЧССmax.
 
     История пересчитывается каскадом от даты тренировки до сегодняшнего дня:
@@ -972,7 +1006,9 @@ async def calculate_load_indexes(
         raise ValueError(f"Телеметрия для тренировки {workout_id} не найдена")
 
     threshold_hr  = await _resolve_threshold_hr(athlete_id, db)
-    tss_this      = _compute_workout_tss(tel.avg_hr, tel.actual_duration_min, threshold_hr)
+    tss_this      = _resolve_actual_tss(
+        tel.avg_hr, tel.rpe, tel.actual_duration_min, threshold_hr
+    )
     tel.actual_tss = _dec(tss_this)
 
     # flush обеспечивает видимость actual_tss в агрегирующем запросе пересчёта

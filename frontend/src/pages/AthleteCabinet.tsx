@@ -185,7 +185,7 @@ function WorkoutCard({ workout, zones, onDeleted }: { workout: Workout; zones: H
               {telemetry.rpe != null && (
                 <Stack gap={0} align="center">
                   <Text fw={600}>{telemetry.rpe}<Text span size="xs" c="dimmed">/10</Text></Text>
-                  <Text size="xs" c="dimmed">Самочувствие</Text>
+                  <Text size="xs" c="dimmed">Тяжесть (RPE)</Text>
                 </Stack>
               )}
             </Group>

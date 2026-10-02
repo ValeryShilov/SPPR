@@ -266,7 +266,7 @@ export default function WorkoutDetailModal({ workout, onClose, onEdit, hrZones, 
               <SimpleGrid cols={telemetry.rpe != null && telemetry.comment ? 2 : 1} mb="sm">
                 {telemetry.rpe != null && (
                   <Box>
-                    <Text size="xs" c="dimmed">Самочувствие</Text>
+                    <Text size="xs" c="dimmed">Тяжесть (RPE)</Text>
                     <Text size="sm" fw={600}>{telemetry.rpe}<Text span size="xs" c="dimmed">/10</Text></Text>
                   </Box>
                 )}

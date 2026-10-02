@@ -212,7 +212,7 @@ function WorkoutDetailSection({ workout }: { workout: Workout }) {
                 <Text fw={700} size="lg" lh={1}>
                   {telemetry.rpe}<Text span size="xs" c="dimmed">/10</Text>
                 </Text>
-                <Text size="xs" c="dimmed">самочувствие</Text>
+                <Text size="xs" c="dimmed">тяжесть</Text>
               </Stack>
             )}
           </Group>
