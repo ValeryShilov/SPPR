@@ -21,6 +21,7 @@ import {
 } from '@mantine/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { athletesApi } from '../api/athletes'
 import { authApi } from '../api/auth'
 import { useAuth } from '../hooks/useAuth'
@@ -572,6 +573,7 @@ function ChangePasswordBlock() {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AthleteSelfProfile() {
+  const navigate = useNavigate()
   const [editOpen, setEditOpen] = useState(false)
 
   const { data: profile, isLoading: profileLoading } = useQuery<AthleteProfile>({
@@ -611,7 +613,12 @@ export default function AthleteSelfProfile() {
               )}
             </Group>
           </Stack>
-          <Button size="xs" variant="light" onClick={() => setEditOpen(true)}>Редактировать</Button>
+          <Group gap="xs" wrap="nowrap">
+            <Button size="xs" variant="light" onClick={() => navigate('/my-analytics')}>
+              Аналитика готовности →
+            </Button>
+            <Button size="xs" variant="light" onClick={() => setEditOpen(true)}>Редактировать</Button>
+          </Group>
         </Group>
 
         <EditProfileModal profile={profile} fullName={account?.full_name} opened={editOpen} onClose={() => setEditOpen(false)} />

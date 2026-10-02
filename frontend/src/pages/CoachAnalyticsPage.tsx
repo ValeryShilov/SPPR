@@ -9,7 +9,7 @@ import {
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { analyticsApi } from '../api/analytics'
 import AthleteAnalytics from '../components/AthleteAnalyticsBlock'
 
@@ -30,8 +30,18 @@ interface AthleteOption {
 
 export default function CoachAnalyticsPage() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [selectedGroupId,   setSelectedGroupId]   = useState<string | null>(null)
-  const [selectedAthleteId, setSelectedAthleteId] = useState<string | null>(null)
+  // ?athlete=<id> — переход из профиля атлета сразу к его аналитике
+  const [selectedAthleteId, setSelectedAthleteId] = useState<string | null>(
+    () => searchParams.get('athlete')
+  )
+
+  // Выбор атлета отражается в адресе, чтобы ссылкой можно было делиться
+  const handleAthleteChange = (athleteId: string | null) => {
+    setSelectedAthleteId(athleteId)
+    setSearchParams(athleteId ? { athlete: athleteId } : {}, { replace: true })
+  }
 
   const { data: athletes = [], isLoading: athletesLoading } = useQuery<AthleteOption[]>({
     queryKey: ['coach-athletes'],
@@ -68,7 +78,7 @@ export default function CoachAnalyticsPage() {
       const stillInGroup = athletes
         .find(a => a.athlete_id === selectedAthleteId)
         ?.groups.some(g => g.id === groupId)
-      if (!stillInGroup) setSelectedAthleteId(null)
+      if (!stillInGroup) handleAthleteChange(null)
     }
   }
 
@@ -98,7 +108,7 @@ export default function CoachAnalyticsPage() {
               placeholder="Выберите атлета..."
               data={athleteSelectData}
               value={selectedAthleteId}
-              onChange={setSelectedAthleteId}
+              onChange={handleAthleteChange}
               searchable clearable
               style={{ width: 280 }}
               disabled={athleteSelectData.length === 0}
@@ -119,7 +129,7 @@ export default function CoachAnalyticsPage() {
       ) : (
         <>
           <Group mb="lg" gap="xs">
-            <Title order={3}>{selectedAthlete?.full_name}</Title>
+            <Title order={3}>{selectedAthlete?.full_name ?? 'Аналитика атлета'}</Title>
             {selectedAthlete && selectedAthlete.groups.length > 0 && (
               <Text size="sm" c="dimmed" style={{ alignSelf: 'flex-end', paddingBottom: 2 }}>
                 {selectedAthlete.groups.map(g => g.name).join(', ')}

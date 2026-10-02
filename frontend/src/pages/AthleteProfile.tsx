@@ -24,7 +24,7 @@ import {
 } from '@mantine/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { athletesApi } from '../api/athletes'
 import { plansApi } from '../api/plans'
 import AlertsPanel from '../components/AlertsPanel'
@@ -844,6 +844,7 @@ const QUAL_LABELS: Record<string, string> = {
 
 export default function AthleteProfile() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
 
   const { data: athlete, isLoading } = useQuery<AthleteData>({
     queryKey: ['athlete', id],
@@ -860,7 +861,7 @@ export default function AthleteProfile() {
     <Container size="xl" py="xl">
       {/* Шапка профиля */}
       <Paper p="md" withBorder radius="md" mb="lg">
-        <Group>
+        <Group justify="space-between" align="flex-start" wrap="nowrap">
           <Stack gap={2}>
             <Title order={2}>{athlete.last_name} {athlete.first_name}</Title>
             <Group gap="xs">
@@ -872,6 +873,13 @@ export default function AthleteProfile() {
               )}
             </Group>
           </Stack>
+          <Button
+            variant="light"
+            style={{ flexShrink: 0 }}
+            onClick={() => navigate(`/analytics?athlete=${id}`)}
+          >
+            Аналитика готовности →
+          </Button>
         </Group>
       </Paper>
 
