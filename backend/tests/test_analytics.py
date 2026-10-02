@@ -23,6 +23,7 @@ from backend.core.config import settings
 from backend.models.athlete import PhysiologicalMarker, TrainingLoadHistory
 from backend.models.group import GroupMembership
 from backend.models.plan import IndividualWorkout
+from backend.models.telemetry import ActualTelemetry
 from backend.services.analytics import (
     _AlertContext,
     _Thresholds,
@@ -35,7 +36,9 @@ from backend.services.analytics import (
     _check_p2,
     _check_p3,
     _check_p4,
+    _advance_load,
     _check_p5,
+    _decay,
     _k_form,
     _k_qual,
     adapt_template,
@@ -172,6 +175,61 @@ class TestKForm:
 
     def test_deep_fatigue_boundary(self):
         assert _k_form(-25.0) == 0.90  # ≥ -25 → 0.90
+
+
+
+
+class TestDecay:
+    """Затухание ATL/CTL за дни без нагрузки."""
+
+    def test_no_decay_for_zero_days(self):
+        assert _decay(100.0, 0, 7) == 100.0
+
+    def test_no_decay_for_negative_days(self):
+        assert _decay(100.0, -3, 7) == 100.0
+
+    def test_single_day_matches_one_recurrence_step(self):
+        # день покоя: ATL + (0 − ATL)/7 = ATL × 6/7
+        assert _decay(70.0, 1, 7) == pytest.approx(60.0)
+
+    def test_compounds_over_days(self):
+        assert _decay(100.0, 3, 7) == pytest.approx(100.0 * (6 / 7) ** 3)
+
+    def test_ctl_decays_slower_than_atl(self):
+        assert _decay(100.0, 7, 42) > _decay(100.0, 7, 7)
+
+    def test_approaches_zero_over_long_gap(self):
+        assert _decay(100.0, 365, 7) < 0.001
+
+
+class TestAdvanceLoad:
+    """Один шаг рекурренты нагрузки."""
+
+    def test_tsb_uses_previous_day_values(self):
+        _, _, tsb = _advance_load(atl=60.0, ctl=80.0, daily_tss=100.0)
+        assert tsb == pytest.approx(20.0)  # CTL_(n−1) − ATL_(n−1)
+
+    def test_first_day_from_zero_history(self):
+        atl, ctl, tsb = _advance_load(0.0, 0.0, 70.0)
+        assert tsb == 0.0
+        assert atl == pytest.approx(10.0)   # 70 / 7
+        assert ctl == pytest.approx(70 / 42)
+
+    def test_rest_day_decays_both(self):
+        atl, ctl, _ = _advance_load(70.0, 42.0, 0.0)
+        assert atl == pytest.approx(60.0)
+        assert ctl == pytest.approx(41.0)
+
+    def test_matches_repeated_decay(self):
+        atl = ctl = 100.0
+        for _ in range(5):
+            atl, ctl, _ = _advance_load(atl, ctl, 0.0)
+        assert atl == pytest.approx(_decay(100.0, 5, 7))
+        assert ctl == pytest.approx(_decay(100.0, 5, 42))
+
+
+
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -679,6 +737,67 @@ class TestCalculateLoadIndexes:
         _, profile = athlete_data
         with pytest.raises(ValueError):
             await calculate_load_indexes(profile.id, uuid.uuid4(), db)
+
+    async def test_gap_days_are_filled_and_decay(self, db, workout_data):
+        workout, _ = workout_data
+        workout.planned_date = TODAY - timedelta(days=5)
+        await db.flush()
+
+        await calculate_load_indexes(workout.athlete_id, workout.id, db)
+
+        result = await db.execute(
+            select(TrainingLoadHistory)
+            .where(TrainingLoadHistory.athlete_id == workout.athlete_id)
+            .order_by(TrainingLoadHistory.date)
+        )
+        rows = result.scalars().all()
+        assert len(rows) == 6                       # день тренировки + 5 дней до сегодня
+        assert float(rows[0].daily_tss) > 0
+        assert all(float(r.daily_tss) == 0 for r in rows[1:])
+        # без нагрузки острая форма затухает
+        assert float(rows[-1].atl_7d) < float(rows[0].atl_7d)
+
+
+    async def test_backdated_workout_recalculates_later_days(self, db, workout_data):
+        workout, _ = workout_data
+        await calculate_load_indexes(workout.athlete_id, workout.id, db)
+
+        res = await db.execute(
+            select(TrainingLoadHistory).where(
+                TrainingLoadHistory.athlete_id == workout.athlete_id,
+                TrainingLoadHistory.date == TODAY,
+            )
+        )
+        ctl_before = float(res.scalar_one().ctl_42d)
+
+        # Тренировка, загруженная задним числом
+        past = IndividualWorkout(
+            id=uuid.uuid4(),
+            template_id=workout.template_id,
+            athlete_id=workout.athlete_id,
+            planned_date=TODAY - timedelta(days=3),
+            status="completed",
+        )
+        db.add(past)
+        await db.flush()
+        db.add(ActualTelemetry(
+            id=uuid.uuid4(), workout_id=past.id, source="manual",
+            actual_duration_min=90, avg_hr=160,
+        ))
+        await db.flush()
+
+        await calculate_load_indexes(workout.athlete_id, past.id, db)
+
+        res_after = await db.execute(
+            select(TrainingLoadHistory).where(
+                TrainingLoadHistory.athlete_id == workout.athlete_id,
+                TrainingLoadHistory.date == TODAY,
+            )
+        )
+        # прошлая нагрузка обязана отразиться на сегодняшнем CTL
+        assert float(res_after.scalar_one().ctl_42d) > ctl_before
+
+
 
 
 class TestGenerateAlerts:

@@ -1,20 +1,24 @@
 """Аналитическое ядро СППР.
 
-Четыре изолированных публичных функции вызываются из роутеров и Celery-задач;
+Четыре изолированных публичных функций вызываются из роутеров и Celery-задач;
 HTTP-слой в этом модуле не импортируется.
 
 Структура модуля
 ────────────────
-  Справочные данные        — константы зон ЧСС и методических ограничений
-  Чистые вычисления        — _k_qual, _k_form, _prognosis_tss, _trailing_run …
+  Справочные данные        — константы зон ЧСС, методических ограничений,
+                             постоянных времени ATL/CTL
+  Чистые вычисления        — _k_qual, _k_form, _decay, _advance_load,
+                             _prognosis_tss, _trailing_run …
   Зоны ЧСС                 — _fetch_max_hr, _fetch_threshold_hr, _build_zones
   Адаптация шаблона        — _resolve_athlete_params
-  Индексы нагрузки         — _resolve_threshold_hr, _compute_workout_tss, …
+  Индексы нагрузки         — _resolve_threshold_hr, _compute_workout_tss,
+                             _load_anchor, _rebuild_load_history …
   Алерты — данные          — _AlertContext, _load_alert_context
   Алерты — правила         — _check_p1 … _check_h5, _ALERT_RULES
   Алерты — сохранение      — _persist_new_alerts
   Публичные функции        — calculate_hr_zones, adapt_template,
-                             calculate_load_indexes, generate_alerts
+                             calculate_load_indexes,
+                             generate_alerts
 """
 import uuid
 from collections.abc import Callable
@@ -23,7 +27,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import NamedTuple
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import settings
@@ -97,9 +101,12 @@ _ZONE_DEFS: list[tuple[str, str, int, int]] = [
 # Методические ограничения длительности тренировки по зонам (мин)
 _ZONE_MAX_MIN: dict[str, int] = {"Z1": 240, "Z2": 240, "Z3": 120, "Z4": 90, "Z5": 60}
 
+# Постоянные времени экспоненциального сглаживания нагрузки (дни)
+_ATL_TIME_CONSTANT = 7    # острая нагрузка — «усталость»
+_CTL_TIME_CONSTANT = 42   # хроническая нагрузка — «форма»
+
 # Средняя точка зоны (% от ЧССmax) — для прогнозного TSS черновиков
 _ZONE_MIDPOINTS: dict[str, float] = {z: (lo + hi) / 2 for z, _, lo, hi in _ZONE_DEFS}
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Чистые вычислительные функции (без I/O, детерминированы)
@@ -152,6 +159,35 @@ def _compute_workout_tss(
         return 0.0
     intensity_factor = avg_hr / threshold_hr
     return (duration_min * intensity_factor ** 2 * 100) / 60
+
+
+
+
+
+
+def _decay(value: float, days: int, time_constant: int) -> float:
+    """Затухание показателя за `days` дней без нагрузки.
+
+    Один день покоя умножает показатель на (1 − 1/τ); за k дней — в k-й степени.
+    """
+    if days <= 0:
+        return value
+    return value * (1 - 1 / time_constant) ** days
+
+
+def _advance_load(atl: float, ctl: float, daily_tss: float) -> tuple[float, float, float]:
+    """Один день рекурренты нагрузки → (ATL, CTL, TSB).
+
+    TSB возвращается на входных (вчерашних) значениях: TSB_n = CTL_(n−1) − ATL_(n−1).
+    """
+    tsb = ctl - atl
+    return (
+        atl + (daily_tss - atl) / _ATL_TIME_CONSTANT,
+        ctl + (daily_tss - ctl) / _CTL_TIME_CONSTANT,
+        tsb,
+    )
+
+
 
 
 def _trailing_run(series: list, predicate: Callable) -> int:
@@ -329,59 +365,105 @@ async def _resolve_threshold_hr(athlete_id: uuid.UUID, db: AsyncSession) -> floa
     return (220 - _age(profile.birth_date)) * 0.87
 
 
-async def _aggregate_daily_tss(
-    athlete_id: uuid.UUID, workout_date: date, db: AsyncSession
-) -> float:
-    """Суммирует actual_tss всех тренировок атлета за указанный день.
+async def _actual_tss_by_date(
+    athlete_id: uuid.UUID, date_from: date, date_to: date, db: AsyncSession
+) -> dict[date, float]:
+    """Сумма фактического TSS по дням диапазона. Дни без тренировок отсутствуют.
 
     Вызывается после db.flush(), поэтому включает только что записанный TSS
     текущей тренировки.
     """
     res = await db.execute(
-        select(ActualTelemetry)
-        .join(IndividualWorkout, ActualTelemetry.workout_id == IndividualWorkout.id)
+        select(
+            IndividualWorkout.planned_date,
+            func.sum(ActualTelemetry.actual_tss).label("total"),
+        )
+        .join(ActualTelemetry, ActualTelemetry.workout_id == IndividualWorkout.id)
         .where(
             IndividualWorkout.athlete_id == athlete_id,
-            IndividualWorkout.planned_date == workout_date,
+            IndividualWorkout.planned_date >= date_from,
+            IndividualWorkout.planned_date <= date_to,
         )
+        .group_by(IndividualWorkout.planned_date)
     )
-    return sum(float(t.actual_tss) for t in res.scalars().all() if t.actual_tss is not None)
+    return {row.planned_date: float(row.total) for row in res.all() if row.total is not None}
 
 
-async def _upsert_load_history(
-    athlete_id: uuid.UUID,
-    workout_date: date,
-    daily_tss: float,
-    prev_atl: float,
-    prev_ctl: float,
-    db: AsyncSession,
-) -> None:
-    """Создаёт или обновляет запись training_load_history за указанный день."""
-    new_atl = prev_atl + (daily_tss - prev_atl) / 7
-    new_ctl = prev_ctl + (daily_tss - prev_ctl) / 42
-    new_tsb = prev_ctl - prev_atl          # TSB = CTL_(n-1) − ATL_(n-1)
 
+
+async def _load_anchor(
+    athlete_id: uuid.UUID, before: date, db: AsyncSession
+) -> tuple[float, float]:
+    """(ATL, CTL) на день, предшествующий `before`, с учётом затухания за разрыв.
+
+    Берёт последнюю запись истории строго раньше `before` и «докатывает» её
+    через пропущенные дни как дни без нагрузки. Без этого разрыв в календаре
+    просто игнорировался бы и форма выглядела бы законсервированной.
+    """
     res = await db.execute(
+        select(TrainingLoadHistory)
+        .where(
+            TrainingLoadHistory.athlete_id == athlete_id,
+            TrainingLoadHistory.date < before,
+        )
+        .order_by(TrainingLoadHistory.date.desc())
+        .limit(1)
+    )
+    anchor = res.scalar_one_or_none()
+    if anchor is None:
+        return 0.0, 0.0
+
+    idle_days = (before - anchor.date).days - 1
+    return (
+        _decay(float(anchor.atl_7d), idle_days, _ATL_TIME_CONSTANT),
+        _decay(float(anchor.ctl_42d), idle_days, _CTL_TIME_CONSTANT),
+    )
+
+
+async def _rebuild_load_history(
+    athlete_id: uuid.UUID, from_date: date, db: AsyncSession
+) -> None:
+    """Пересчитывает training_load_history подряд от from_date до сегодня.
+
+    Заменяет одношаговое обновление одного дня: индексы ATL/CTL рекуррентны,
+    поэтому изменение TSS за прошедшую дату обесценивает все последующие
+    значения — их нужно пересчитать каскадом. Дни без тренировок записываются
+    с нулевым TSS, иначе затухание формы не попадает ни в графики, ни в правила
+    диагностики, которые читают ряд по календарным дням.
+    """
+    date_to = max(date.today(), from_date)
+    atl, ctl = await _load_anchor(athlete_id, from_date, db)
+    tss_by_date = await _actual_tss_by_date(athlete_id, from_date, date_to, db)
+
+    res_existing = await db.execute(
         select(TrainingLoadHistory).where(
             TrainingLoadHistory.athlete_id == athlete_id,
-            TrainingLoadHistory.date == workout_date,
+            TrainingLoadHistory.date >= from_date,
+            TrainingLoadHistory.date <= date_to,
         )
     )
-    existing = res.scalar_one_or_none()
-    if existing:
-        existing.daily_tss = _dec(daily_tss)
-        existing.atl_7d    = _dec(new_atl)
-        existing.ctl_42d   = _dec(new_ctl)
-        existing.tsb       = _dec(new_tsb)
-    else:
-        db.add(TrainingLoadHistory(
-            athlete_id=athlete_id,
-            date=workout_date,
-            daily_tss=_dec(daily_tss),
-            atl_7d=_dec(new_atl),
-            ctl_42d=_dec(new_ctl),
-            tsb=_dec(new_tsb),
-        ))
+    existing = {r.date: r for r in res_existing.scalars().all()}
+
+    for offset in range((date_to - from_date).days + 1):
+        day = from_date + timedelta(days=offset)
+        daily_tss = tss_by_date.get(day, 0.0)
+        atl, ctl, tsb = _advance_load(atl, ctl, daily_tss)
+
+        row = existing.get(day)
+        if row is not None:
+            row.daily_tss = _dec(daily_tss)
+            row.atl_7d    = _dec(atl)
+            row.ctl_42d   = _dec(ctl)
+            row.tsb       = _dec(tsb)
+        else:
+            db.add(TrainingLoadHistory(
+                athlete_id=athlete_id,
+                date=day,
+                daily_tss=_dec(daily_tss),
+                atl_7d=_dec(atl),
+                ctl_42d=_dec(ctl),
+                tsb=_dec(tsb),
+            ))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -863,8 +945,12 @@ async def calculate_load_indexes(
         CTLₙ = CTL₍ₙ₋₁₎ + (TSS_день − CTL₍ₙ₋₁₎) / 42
         TSBₙ = CTL₍ₙ₋₁₎ − ATL₍ₙ₋₁₎
 
-    При нескольких тренировках за день TSS суммируются. ЧССПАНО берётся
-    из последнего physiological_marker; при отсутствии — 87% ЧССmax.
+    При нескольких тренировках за день TSS суммируются.
+    ЧССПАНО берётся из последнего physiological_marker; при отсутствии — 87% ЧССmax.
+
+    История пересчитывается каскадом от даты тренировки до сегодняшнего дня:
+    ATL/CTL рекуррентны, поэтому загрузка данных задним числом меняет все
+    последующие дни. Пропущенные дни заполняются нулевым TSS и затухают.
 
     Параметры:
         athlete_id: UUID профиля атлета.
@@ -889,27 +975,12 @@ async def calculate_load_indexes(
     tss_this      = _compute_workout_tss(tel.avg_hr, tel.actual_duration_min, threshold_hr)
     tel.actual_tss = _dec(tss_this)
 
-    # flush обеспечивает видимость actual_tss в агрегирующем запросе ниже
+    # flush обеспечивает видимость actual_tss в агрегирующем запросе пересчёта
     await db.flush()
-    daily_tss = await _aggregate_daily_tss(athlete_id, workout.planned_date, db)
-
-    res_prev = await db.execute(
-        select(TrainingLoadHistory)
-        .where(
-            TrainingLoadHistory.athlete_id == athlete_id,
-            TrainingLoadHistory.date < workout.planned_date,
-        )
-        .order_by(TrainingLoadHistory.date.desc())
-        .limit(1)
-    )
-    prev = res_prev.scalar_one_or_none()
-    await _upsert_load_history(
-        athlete_id, workout.planned_date, daily_tss,
-        prev_atl=float(prev.atl_7d)  if prev else 0.0,
-        prev_ctl=float(prev.ctl_42d) if prev else 0.0,
-        db=db,
-    )
+    await _rebuild_load_history(athlete_id, workout.planned_date, db)
     await db.commit()
+
+
 
 
 async def generate_alerts(

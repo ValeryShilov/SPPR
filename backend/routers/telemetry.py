@@ -22,12 +22,26 @@ from backend.schemas.telemetry import (
     TelemetryTaskStatus,
     TelemetryUploadResponse,
 )
+from backend.services.analytics import calculate_load_indexes, generate_alerts
 from backend.tasks.telemetry import parse_telemetry_file
 
 router = APIRouter()
 
 _UPLOAD_DIR = Path("/app/uploads")
 _ALLOWED_FORMATS = {"fit", "gpx", "tcx", "csv"}
+
+
+async def _recalculate_load(
+    athlete_id: uuid.UUID, workout_id: uuid.UUID, db: AsyncSession
+) -> None:
+    """Пересчитывает TSS/ATL/CTL/TSB и проверяет правила диагностики.
+
+    Для импортированных файлов это делает Celery-задача; при ручном вводе
+    и правке RPE вызывать пересчёт нужно здесь, иначе история нагрузки
+    останется без изменений и алерты не сработают.
+    """
+    await calculate_load_indexes(athlete_id, workout_id, db)
+    await generate_alerts(athlete_id, db, triggered_by_workout_id=workout_id)
 
 
 async def _get_profile(user_id: uuid.UUID, db: AsyncSession) -> AthleteProfile:
@@ -144,6 +158,10 @@ async def update_telemetry_notes(
     telemetry.comment = data.comment
     workout.status = "completed"
     await db.commit()
+
+    # RPE влияет на TSS, если в телеметрии нет ЧСС, — пересчитываем индексы
+    await _recalculate_load(profile.id, workout_id, db)
+
     await db.refresh(telemetry)
     return telemetry
 
@@ -178,6 +196,9 @@ async def manual_telemetry(
 
     workout.status = "completed"
     await db.commit()
+
+    await _recalculate_load(profile.id, data.workout_id, db)
+
     await db.refresh(telemetry)
     return telemetry
 

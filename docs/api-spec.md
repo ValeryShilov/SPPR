@@ -91,8 +91,10 @@ POST   /telemetry/upload                 -- загрузка файла FIT/GPX/
 GET    /telemetry/status/{task_id}       -- статус Celery-обработки файла
 GET    /telemetry/workout/{workout_id}   -- телеметрия тренировки
 POST   /telemetry/manual                 -- ручной ввод фактических данных
+                                            (пересчитывает TSS/ATL/CTL/TSB и алерты)
 PATCH  /telemetry/workout/{workout_id}/notes
-                                         -- RPE и комментарий (→ status=completed)
+                                         -- RPE и комментарий (→ status=completed,
+                                            пересчитывает TSS/ATL/CTL/TSB и алерты)
 
 ## Метрики (спортсмен) — /metrics
 POST   /metrics                     -- субъективные метрики (сон, усталость, HRV)
